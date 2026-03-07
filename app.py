@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import calendar
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Deal Sheet Assistant", layout="wide")
@@ -27,10 +28,19 @@ for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # --- USER INPUT ---
-if user_input := st.chat_input("Ask deal (example: LH business / cheapest eco deal)"):
+if user_input := st.chat_input("Ask deal (example: LH business October / cheapest eco deal)"):
 
     st.session_state.messages.append({"role": "user", "content": user_input})
     query = user_input.lower()
+
+    # --- MONTH DETECTION ---
+    month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+
+    query_month = None
+    for m in month_map:
+        if m in query:
+            query_month = month_map[m]
+            break
 
     with st.chat_message("assistant"):
 
@@ -76,17 +86,32 @@ if user_input := st.chat_input("Ask deal (example: LH business / cheapest eco de
             else:
 
                 filtered_df = df.copy()
-
                 airline_found = None
+
+                words = query.split()
 
                 for _, row in df.iterrows():
 
                     airline = str(row["airlines"]).lower()
+                    airline_name = str(row["airlines name"]).lower()
                     iata = str(row["iata"]).lower()
 
-                    if airline in query or iata in query:
+                    # Exact IATA match
+                    if iata in words:
+                        airline_found = airline
+                        filtered_df = df[df["iata"].str.lower() == iata]
+                        break
+
+                    # Exact airline code match
+                    if airline in words:
                         airline_found = airline
                         filtered_df = df[df["airlines"].str.lower() == airline]
+                        break
+
+                    # Airline name match
+                    if airline_name in query:
+                        airline_found = airline
+                        filtered_df = df[df["airlines name"].str.lower() == airline_name]
                         break
 
                 if not airline_found:
@@ -107,24 +132,43 @@ if user_input := st.chat_input("Ask deal (example: LH business / cheapest eco de
 
                     else:
 
-                        deal_value = result.iloc[0][cabin_column]
-                        airline_name = result.iloc[0]["airlines"]
-                        iata_code = result.iloc[0]["iata"]
+                        row = result.iloc[0]
 
-                        # --- TEXT RESPONSE ---
-                        st.write(f"✈️ **{airline_name} ({iata_code})**")
-                        st.write(f"💺 **{cabin_column.upper()} Deal:** {deal_value}")
+                        deal_value = row[cabin_column]
+                        airline_name = row["airlines name"]
+                        iata_code = row["iata"]
+                        validity_text = str(row.get("validity", "")).lower()
 
-                        if "exclusions" in result.columns:
-                            st.write(f"⚠️ **Exclusions:** {result.iloc[0]['exclusions']}")
+                        # --- VALIDITY MONTH DETECTION ---
+                        validity_month = None
+                        for m in month_map:
+                            if m in validity_text:
+                                validity_month = month_map[m]
+                                break
 
-                        if "notes" in result.columns:
-                            st.write(f"📝 **Notes:** {result.iloc[0]['notes']}")
+                        # --- VALIDITY CHECK ---
+                        if query_month and validity_month and query_month > validity_month:
 
-                        # --- FULL ROW TABLE ---
-                        st.write("📊 Full Deal Details:")
-                        st.dataframe(result)
+                            st.write("❌ No deal available for the given month.")
+                            reply = "Deal not valid for the requested month."
 
-                        reply = f"{airline_name} {cabin_column} deal displayed."
+                        else:
+
+                            st.write(f"✈️ **{airline_name} ({iata_code})**")
+                            st.write(f"💺 **{cabin_column.upper()} Deal:** {deal_value}")
+
+                            if "validity" in result.columns:
+                                st.write(f"📅 **Validity:** {row['validity']}")
+
+                            if "exclusions" in result.columns and pd.notna(row["exclusions"]):
+                                st.write(f"⚠️ **Exclusions:** {row['exclusions']}")
+
+                            if "notes" in result.columns and pd.notna(row["notes"]):
+                                st.write(f"📝 **Notes:** {row['notes']}")
+
+                            st.write("📊 Full Deal Details:")
+                            st.dataframe(result)
+
+                            reply = f"{airline_name} {cabin_column} deal displayed."
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
