@@ -4,73 +4,65 @@ import google.generativeai as genai
 
 # --- 1. CONFIG & API SETUP ---
 st.set_page_config(page_title="Deal Sheet Bot", layout="wide")
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])  # Add your API key in Streamlit secrets
+MODEL_NAME = "gemini-1.5-flash"
 
-# --- 2. CONNECT TO GOOGLE SHEET ---
-# Replace this with your specific Export URL from Step 2
+# --- 2. INITIALIZE CHAT STATE ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# --- 3. CONNECT TO GOOGLE SHEET ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
-@st.cache_data(ttl=600) # Refresh data every 10 minutes
-def load_sheet_data(url):
+@st.cache_data(ttl=600)  # Cache for 10 minutes
+def load_sheet(url):
     try:
-        # Pandas reads the sheet directly from the URL
         df = pd.read_csv(url)
         return df
     except Exception as e:
-        st.error(f"Failed to connect to Google Sheet: {e}")
-        return None
+        st.error(f"Failed to load Google Sheet: {e}")
+        return pd.DataFrame()
 
-df = load_sheet_data(SHEET_URL)
+df = load_sheet(SHEET_URL)
 
-# --- 3. CHAT INTERFACE ---
+# --- 4. APP UI ---
 st.title("Live Deal Sheet Assistant ✈️")
 
-# (Rest of your chat history and user input code here...)
+# Show previous chat messages
+for msg in st.session_state.messages:
+    if msg["role"] == "user":
+        st.chat_message("user").write(msg["content"])
+    else:
+        st.chat_message("assistant").write(msg["content"])
 
-if prompt := st.chat_input("Ask about an airline..."):
-    # Add user message to state
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# User input
+if user_input := st.chat_input("Ask about an airline..."):
+    st.session_state.messages.append({"role": "user", "content": user_input})
     
-    # AI Prompt using the Sheet Data as context
-    # df.to_csv() creates a text version of the sheet for the AI to read
-    context = df.to_csv(index=False) 
-    full_query = f"Data from Deal Sheet:\n{context}\n\nUser Question: {prompt}"
-    
-    with st.chat_message("assistant"):
-        response = model.generate_content(full_query)
-        st.write(response.text)
-        st.session_state.messages.append({"role": "assistant", "content": response.text})
-
-# --- 4. SMART BOT LOGIC ---
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # We tell the AI to act as a validator
-    context = df.to_csv(index=False)
-    
+    # Prepare context for AI
+    sheet_context = df.to_csv(index=False)
     full_prompt = f"""
-    You are a professional travel agent assistant. 
-    Your goal is to provide accurate deal information from the data provided.
-    
-    REQUIRED INFO TO GIVE A FINAL PRICE:
-    1. Airline Name
-    2. Cabin Class (Eco, Bus, First)
-    3. Travel Date (to check validity)
+You are a professional travel agent assistant. Your goal is to provide accurate deal information from the provided data.
 
-    RULES:
-    - If the user is missing any of the 3 items above, ASK them for the missing detail politely.
-    - If you have all info, show the deal in a clear Markdown Table.
-    - Always mention the 18% tax deduction and RS.10 miscellaneous fee. 
-    - If the airline isn't in the list, apply the default markup (INR 100 Eco / 200 Bus). [cite: 4]
+REQUIRED INFO TO GIVE FINAL PRICE:
+1. Airline Name
+2. Cabin Class (Eco, Bus, First)
+3. Travel Date
 
-    DATA:
-    {context}
+RULES:
+- If user misses any of the above, ask politely for missing details.
+- If all info is present, show the deal in a Markdown Table.
+- Always mention the 18% tax deduction and Rs.10 miscellaneous fee.
+- If airline not in sheet, apply default markup (INR 100 Eco / 200 Bus).
 
-    USER QUESTION: {prompt}
-    """
+DATA:
+{sheet_context}
+
+USER QUESTION: {user_input}
+"""
 
     with st.chat_message("assistant"):
-        response = model.generate_content(full_prompt)
+        # Correct method to generate AI response
+        response = genai.generate_text(model=MODEL_NAME, prompt=full_prompt)
         st.markdown(response.text)
         st.session_state.messages.append({"role": "assistant", "content": response.text})
