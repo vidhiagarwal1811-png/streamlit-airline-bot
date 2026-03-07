@@ -1,130 +1,95 @@
 import streamlit as st
 import pandas as pd
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Deal Sheet Assistant", layout="wide")
+st.title("✈️ Airline Deal Bot")
 
-# --- SESSION STATE ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Upload Excel
+uploaded_file = st.file_uploader("Upload Deal Sheet", type=["xlsx"])
 
-# --- GOOGLE SHEET ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
+if uploaded_file:
 
-@st.cache_data(ttl=600)
-def load_sheet(url):
-    df = pd.read_csv(url)
+    df = pd.read_excel(uploaded_file)
+
+    # Clean dataframe
     df.columns = df.columns.str.strip().str.lower()
-    return df
+    df = df.fillna("")
 
-df = load_sheet(SHEET_URL)
+    query = st.text_input("Ask deal (example: EY business / cheapest eco deal)").lower()
 
-# --- TITLE ---
-st.title("✈️ Smart Airline Deal Assistant")
+    if query:
 
-# --- SHOW CHAT HISTORY ---
-for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+        words = query.split()
 
-# --- USER INPUT ---
-if user_input := st.chat_input("Ask deal (example: LH business / cheapest eco deal)"):
+        cabin = None
+        airline_found = None
+        result = None
 
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    query = user_input.lower()
+        # Detect cabin class
+        if "eco" in query:
+            cabin = "eco"
 
-    with st.chat_message("assistant"):
+        elif "prem" in query or "premium" in query:
+            cabin = "prem. eco"
 
-        if df.empty:
-            reply = "Deal sheet could not be loaded."
-            st.write(reply)
+        elif "bus" in query or "business" in query:
+            cabin = "bus"
+
+        elif "first" in query:
+            cabin = "first"
 
         else:
+            st.warning("Please specify cabin class: Eco / Prem.Eco / Bus / First")
 
-            # --- CABIN DETECTION ---
-            cabin_map = {
-                "eco": "eco",
-                "economy": "eco",
-                "prem": "prem.eco",
-                "premium": "prem.eco",
-                "bus": "bus",
-                "business": "bus",
-                "first": "first"
-            }
+        # Detect airline
+        for _, row in df.iterrows():
 
-            cabin_column = None
-            for key in cabin_map:
-                if key in query:
-                    cabin_column = cabin_map[key]
-                    break
+            airline = str(row["airlines"]).lower()
+            airline_name = str(row["airlines name"]).lower()
+            iata = str(row["iata"]).lower()
 
-            # --- CHEAPEST DEAL LOGIC ---
-            if "cheapest" in query or "best" in query:
+            # Exact IATA match
+            if iata in words:
+                airline_found = airline
+                result = df[df["iata"].str.lower() == iata]
+                break
 
-                if cabin_column and cabin_column in df.columns:
+            # Airline code match
+            if airline in words:
+                airline_found = airline
+                result = df[df["airlines"].str.lower() == airline]
+                break
 
-                    best_deals = df.sort_values(by=cabin_column).head(5)
+            # Airline name match
+            if airline_name in query:
+                airline_found = airline
+                result = df[df["airlines name"].str.lower() == airline_name]
+                break
 
-                    st.write(f"🏆 Top {cabin_column} deals:")
-                    st.dataframe(best_deals)
+        # If airline found
+        if result is not None and cabin:
 
-                    reply = f"Showing best {cabin_column} deals."
+            row = result.iloc[0]
 
-                else:
-                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First"
-                    st.write(reply)
+            st.write(f"✈️ **{row['airlines name']} ({row['airlines']})**")
 
+            deal = row[cabin]
+
+            if deal:
+                st.write(f"📌 **{cabin.upper()} Deal:** {deal}")
             else:
+                st.write("❌ No deal available")
 
-                filtered_df = df.copy()
+            if row["validity"]:
+                st.write(f"📅 **Validity:** {row['validity']}")
 
-                airline_found = None
+            if row["exclusions"]:
+                st.write(f"⚠️ **Exclusions:** {row['exclusions']}")
 
-                for _, row in df.iterrows():
+            if row["note"]:
+                st.write(f"📝 **Note:** {row['note']}")
 
-                    airline = str(row["airlines"]).lower()
-                    iata = str(row["iata"]).lower()
+            st.subheader("📊 Full Deal Row")
+            st.dataframe(result)
 
-                    if airline in query or iata in query:
-                        airline_found = airline
-                        filtered_df = df[df["airlines"].str.lower() == airline]
-                        break
-
-                if not airline_found:
-                    reply = "Please mention a valid airline name or IATA code."
-                    st.write(reply)
-
-                elif not cabin_column:
-                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First."
-                    st.write(reply)
-
-                else:
-
-                    result = filtered_df
-
-                    if result.empty:
-                        reply = "No deal found."
-                        st.write(reply)
-
-                    else:
-
-                        deal_value = result.iloc[0][cabin_column]
-                        airline_name = result.iloc[0]["airlines"]
-                        iata_code = result.iloc[0]["iata"]
-
-                        # --- TEXT RESPONSE ---
-                        st.write(f"✈️ **{airline_name} ({iata_code})**")
-                        st.write(f"💺 **{cabin_column.upper()} Deal:** {deal_value}")
-
-                        if "exclusions" in result.columns:
-                            st.write(f"⚠️ **Exclusions:** {result.iloc[0]['exclusions']}")
-
-                        if "notes" in result.columns:
-                            st.write(f"📝 **Notes:** {result.iloc[0]['notes']}")
-
-                        # --- FULL ROW TABLE ---
-                        st.write("📊 Full Deal Details:")
-                        st.dataframe(result)
-
-                        reply = f"{airline_name} {cabin_column} deal displayed."
-
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+        else:
+            st.error("Airline or deal not found")
