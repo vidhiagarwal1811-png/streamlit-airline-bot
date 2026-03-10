@@ -56,7 +56,7 @@ if user_input := st.chat_input("Ask deal (example: LH business October / cheapes
             cabin_column = None
 
             if "prem" in words or "premium" in words:
-                cabin_column = "prem.eco"
+                cabin_column = "prem. eco"
 
             elif "bus" in words or "business" in words:
                 cabin_column = "bus"
