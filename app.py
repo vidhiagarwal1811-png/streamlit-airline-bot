@@ -50,22 +50,22 @@ if user_input := st.chat_input("Ask deal (example: LH business October / cheapes
 
         else:
 
-      # --- CABIN DETECTION (FIXED) ---
-words = query.replace(".", " ").split()
+            # --- CABIN DETECTION (FIXED) ---
+            words = query.replace(".", " ").split()
 
-cabin_column = None
+            cabin_column = None
 
-if "prem" in words or "premium" in words:
-    cabin_column = "prem.eco"
+            if "prem" in words or "premium" in words:
+                cabin_column = "prem.eco"
 
-elif "bus" in words or "business" in words:
-    cabin_column = "bus"
+            elif "bus" in words or "business" in words:
+                cabin_column = "bus"
 
-elif "first" in words:
-    cabin_column = "first"
+            elif "first" in words:
+                cabin_column = "first"
 
-elif "eco" in words or "economy" in words:
-    cabin_column = "eco"
+            elif "eco" in words or "economy" in words:
+                cabin_column = "eco"
 
             # --- CHEAPEST DEAL LOGIC ---
             if "cheapest" in query or "best" in query:
