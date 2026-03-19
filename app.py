@@ -28,7 +28,7 @@ for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # --- USER INPUT ---
-if user_input := st.chat_input("Ask deal (example: Airline code and Cabin type (AI deal for eco)"):
+if user_input := st.chat_input("Ask deal (Hi"):
 
     st.session_state.messages.append({"role": "user", "content": user_input})
     query = user_input.lower()
