@@ -2,21 +2,18 @@ import streamlit as st
 import pandas as pd
 
 # --- 1. SETUP ---
-st.set_page_config(page_title="Deal Finder", layout="wide")
+st.set_page_config(page_title="Deal Finder", layout="wide", page_icon="✈️")
 
 # --- 2. DATA LOAD ---
-# Using the export link for your specific sheet
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        # High-speed CSV read
         df = pd.read_csv(SHEET_URL)
         df.columns = df.columns.str.strip().str.lower()
         return df
-    except Exception as e:
-        st.error(f"⚠️ Connection Error: {e}")
+    except:
         return pd.DataFrame()
 
 df = load_data()
@@ -24,44 +21,70 @@ df = load_data()
 # --- 3. SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "last_airline" not in st.session_state:
-    st.session_state.last_airline = None
+if "current_airline" not in st.session_state:
+    st.session_state.current_airline = None
 
 # --- 4. UI ---
-st.title("✈️ Airline Deal Assistant")
+st.title("✈️ Reliable Deal Assistant")
+st.write("Search by Airline name, IATA code (EY, AI, etc.), or Cabin.")
 
-# Show the full sheet as a fallback if the user wants to see everything
-with st.expander("View Full Deal Sheet"):
-    st.write(df)
-
-# Display history
+# Display chat history (REWRITTEN to show tables from history)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
-        if "table" in msg:
-            st.dataframe(msg["table"])
+        if "data_row" in msg and msg["data_row"] is not None:
+            st.dataframe(pd.DataFrame([msg["data_row"]]))
 
-# --- 5. SEARCH LOGIC ---
-if user_input := st.chat_input("Ex: 'EY' or 'Air India'"):
+# --- 5. LOGIC ---
+if user_input := st.chat_input("Ex: 'Etihad' or 'What about Business?'"):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
 
     query = user_input.lower().strip()
     
-    with st.chat_message("assistant"):
-        # SEARCH ACROSS ALL COLUMNS
-        # This finds the word anywhere in the sheet
-        mask = df.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1)
-        result_df = df[mask]
+    # --- STEP A: IDENTIFY AIRLINE ---
+    found_row = None
+    for _, row in df.iterrows():
+        name = str(row.get('airlines name', '')).lower()
+        iata = str(row.get('airlines', '')).lower()
+        
+        if iata in query or name in query:
+            st.session_state.current_airline = row
+            found_row = row
+            break
+            
+    # --- STEP B: IDENTIFY CABIN ---
+    cabin = None
+    if any(x in query for x in ["bus", "business"]): cabin = "bus"
+    elif any(x in query for x in ["eco", "economy"]): cabin = "eco"
+    elif any(x in query for x in ["prem", "premium"]): cabin = "prem. eco"
+    elif "first" in query: cabin = "first"
 
-        if not result_df.empty:
-            response = f"I found {len(result_df)} deal(s) matching '{user_input}':"
-            st.write(response)
-            st.dataframe(result_df)
-            # Store in history so it stays on screen
-            st.session_state.messages.append({"role": "assistant", "content": response, "table": result_df})
+    # --- STEP C: GENERATE RESPONSE ---
+    with st.chat_message("assistant"):
+        active_row = found_row if found_row is not None else st.session_state.current_airline
+        
+        if active_row is not None:
+            airline_name = str(active_row.get('airlines name', 'UNKNOWN')).upper()
+            
+            if cabin:
+                deal_val = active_row.get(cabin, "N/A")
+                validity = active_row.get('validity', 'No data')
+                reply = f"The **{cabin.upper()}** deal for **{airline_name}** is **{deal_val}**.\n\n*Validity: {validity}*"
+            else:
+                reply = f"I found the deals for **{airline_name}**. Which cabin (Eco, Business, First) are you looking for?"
+            
+            # Show the table immediately
+            st.dataframe(pd.DataFrame([active_row]))
+            # Save the message AND the row data to history
+            st.session_state.messages.append({
+                "role": "assistant", 
+                "content": reply, 
+                "data_row": active_row
+            })
         else:
-            response = f"I couldn't find anything for '{user_input}'. Try a different airline or sector."
-            st.write(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            reply = "I couldn't find that airline. Please check the name or IATA code (e.g., 'EY' for Etihad)."
+            st.session_state.messages.append({"role": "assistant", "content": reply, "data_row": None})
+
+        st.write(reply)
