@@ -1,66 +1,174 @@
 import streamlit as st
 import pandas as pd
-import google.generativeai as genai
+import calendar
 
-# --- 1. CONFIG ---
-st.set_page_config(page_title="Deal Bot", layout="centered")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Deal Sheet Assistant", layout="wide")
 
-# --- 2. AI CONNECTION ---
-# We use 'try' so that even if the AI fails, the App STILL LOADS
-api_key = st.secrets.get("GEMINI_API_KEY")
-
-if not api_key:
-    st.error("Missing GEMINI_API_KEY in Secrets!")
-    st.stop()
-
-try:
-    genai.configure(api_key=api_key)
-    # Using 'gemini-pro' as it is the most stable name across all versions
-    model = genai.GenerativeModel('gemini-pro')
-except Exception as e:
-    st.warning(f"AI Brain offline. Error: {e}")
-
-# --- 3. DATA LOAD ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
-
-@st.cache_data(ttl=60)
-def load_data():
-    try:
-        data = pd.read_csv(SHEET_URL)
-        data.columns = data.columns.str.strip().str.lower()
-        return data
-    except:
-        return pd.DataFrame()
-
-df = load_data()
-
-# --- 4. CHAT INTERFACE ---
-st.title("✈️ Smart Deal Bot")
-
+# --- SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+# --- GOOGLE SHEET ---
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
-if user_input := st.chat_input("Ask for a deal..."):
+@st.cache_data(ttl=600)
+def load_sheet(url):
+    df = pd.read_csv(url)
+    df.columns = df.columns.str.strip().str.lower()
+    return df
+
+df = load_sheet(SHEET_URL)
+
+# --- TITLE ---
+st.title("✈️ Smart Airline Deal Assistant")
+
+# --- SHOW CHAT HISTORY ---
+for msg in st.session_state.messages:
+    st.chat_message(msg["role"]).write(msg["content"])
+
+# --- USER INPUT ---
+if user_input := st.chat_input("Ask deal (example: Airline code and Cabin type (AI deal for eco)"):
+
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.write(user_input)
+    query = user_input.lower()
+
+    # --- MONTH DETECTION ---
+    month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+
+    query_month = None
+    for m in month_map:
+        if m in query:
+            query_month = month_map[m]
+            break
 
     with st.chat_message("assistant"):
-        # Memory Logic: Check last 3 messages
-        history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-3:]])
-        
-        # Data Logic: Send first 50 rows only to keep it fast
-        context = df.head(50).to_string(index=False)
-        
-        prompt = f"Data: {context}\n\nHistory: {history}\n\nUser: {user_input}\n\nAnswer based ONLY on data. If vague, ask for the airline."
-        
-        try:
-            response = model.generate_content(prompt)
-            st.write(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-        except Exception as e:
-            st.error(f"AI failed to respond. Technical Error: {e}")
+
+        if df.empty:
+            reply = "Deal sheet could not be loaded."
+            st.write(reply)
+
+        else:
+
+            # --- CABIN DETECTION (FIXED) ---
+            words = query.replace(".", " ").split()
+
+            cabin_column = None
+
+            if "prem" in words or "premium" in words:
+                cabin_column = "prem. eco"
+
+            elif "bus" in words or "business" in words:
+                cabin_column = "bus"
+
+            elif "first" in words:
+                cabin_column = "first"
+
+            elif "eco" in words or "economy" in words:
+                cabin_column = "eco"
+
+            # --- CHEAPEST DEAL LOGIC ---
+            if "cheapest" in query or "best" in query:
+
+                if cabin_column and cabin_column in df.columns:
+
+                    best_deals = df.sort_values(by=cabin_column).head(5)
+
+                    st.write(f"🏆 Top {cabin_column} deals:")
+                    st.dataframe(best_deals)
+
+                    reply = f"Showing best {cabin_column} deals."
+
+                else:
+                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First"
+                    st.write(reply)
+
+            else:
+
+                filtered_df = df.copy()
+                airline_found = None
+
+                words = query.split()
+
+                for _, row in df.iterrows():
+
+                    airline = str(row["airlines"]).lower()
+                    airline_name = str(row["airlines name"]).lower()
+                    iata = str(row["iata"]).lower()
+
+                    # Exact IATA match
+                    if iata in words:
+                        airline_found = airline
+                        filtered_df = df[df["iata"].str.lower() == iata]
+                        break
+
+                    # Exact airline code match
+                    if airline in words:
+                        airline_found = airline
+                        filtered_df = df[df["airlines"].str.lower() == airline]
+                        break
+
+                    # Airline name match
+                    if airline_name in query:
+                        airline_found = airline
+                        filtered_df = df[df["airlines name"].str.lower() == airline_name]
+                        break
+
+                if not airline_found:
+                    reply = "Please mention a valid airline name or IATA code."
+                    st.write(reply)
+
+                elif not cabin_column:
+                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First."
+                    st.write(reply)
+
+                else:
+
+                    result = filtered_df
+
+                    if result.empty:
+                        reply = "No deal found."
+                        st.write(reply)
+
+                    else:
+
+                        row = result.iloc[0]
+
+                        deal_value = row[cabin_column]
+                        airline_name = row["airlines name"]
+                        iata_code = row["iata"]
+                        validity_text = str(row.get("validity", "")).lower()
+
+                        # --- VALIDITY MONTH DETECTION ---
+                        validity_month = None
+                        for m in month_map:
+                            if m in validity_text:
+                                validity_month = month_map[m]
+                                break
+
+                        # --- VALIDITY CHECK ---
+                        if query_month and validity_month and query_month > validity_month:
+
+                            st.write("❌ No deal available for the given month.")
+                            reply = "Deal not valid for the requested month."
+
+                        else:
+
+                            st.write(f"✈️ **{airline_name} ({iata_code})**")
+                            st.write(f"💺 **{cabin_column.upper()} Deal:** {deal_value}")
+
+                            if "validity" in result.columns:
+                                st.write(f"📅 **Validity:** {row['validity']}")
+
+                            if "exclusions" in result.columns and pd.notna(row["exclusions"]):
+                                st.write(f"⚠️ **Exclusions:** {row['exclusions']}")
+
+                            if "notes" in result.columns and pd.notna(row["notes"]):
+                                st.write(f"📝 **Notes:** {row['notes']}")
+
+                            st.write("📊 Full Deal Details:")
+                            st.dataframe(result)
+
+                            reply = f"{airline_name} {cabin_column} deal displayed."
+
+        st.session_state.messages.append({"role": "assist
