@@ -2,96 +2,85 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- 1. SETUP & THEMES ---
-st.set_page_config(page_title="Proactive Deal Assistant", layout="centered", page_icon="✈️")
+# --- 1. SETTINGS ---
+st.set_page_config(page_title="Airline Deal Bot", layout="wide")
 
-# --- 2. CONNECT TO THE BRAIN (GEMINI) ---
-if "GEMINI_API_KEY" in st.secrets:
-    try:
+# --- 2. THE BRAIN (GEMINI) ---
+# We wrap this in a try/except so even if the key is wrong, the app doesn't crash
+try:
+    if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         model = genai.GenerativeModel('gemini-1.5-flash')
-    except Exception as e:
-        st.error(f"Brain connection failed: {e}")
-else:
-    st.error("Missing GEMINI_API_KEY in Streamlit Secrets!")
+        ai_available = True
+    else:
+        ai_available = False
+except:
+    ai_available = False
 
-# --- 3. SESSION MEMORY ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# --- 4. LOAD THE DATA (THE GOOGLE SHEET) ---
+# --- 3. THE DATA (GOOGLE SHEET) ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
-@st.cache_data(ttl=60) # Refreshes every minute
-def load_live_deals():
+@st.cache_data(ttl=60)
+def load_data():
     try:
-        # We read the sheet and force everything to string to avoid math errors
         df = pd.read_csv(SHEET_URL)
         df.columns = df.columns.str.strip().str.lower()
         return df
     except Exception as e:
-        st.error(f"Could not read Google Sheet: {e}")
+        st.error(f"Cannot read Google Sheet. Error: {e}")
         return pd.DataFrame()
 
-df = load_live_deals()
+df = load_data()
 
-# --- 5. THE BRAIN FUNCTION (REBUILT) ---
-def get_ai_response(user_input, dataframe, history):
-    # Convert the actual sheet data into a clean text block for the AI
-    # This ensures the AI is actually "Reading" the sheet
-    sheet_as_text = dataframe.to_string(index=False)
-    
-    # Create the conversation thread
-    chat_context = ""
-    for m in history[-5:]:
-        chat_context += f"{m['role']}: {m['content']}\n"
+# --- 4. SESSION STATE ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    # THE MASTER PROMPT
-    prompt = f"""
-    SYSTEM: You are a professional B2B Travel Sales Assistant. 
-    You have DIRECT ACCESS to the following live Deal Sheet data.
-    
-    LIVE DATA FROM GOOGLE SHEET:
-    {sheet_as_text}
-    
-    CONVERSATION HISTORY:
-    {chat_context}
-    
-    USER INQUIRY: {user_input}
-    
-    STRICT RULES:
-    1. READ INTENT: If the user says 'Hi' or is vague, ask them what airline or cabin they are looking for.
-    2. MEMORY: If they previously asked about 'Air India' and now say 'what about business?', you MUST answer for Air India Business class.
-    3. PRECISION: Only give deals that exist in the table above. If an airline isn't there, say you don't have that specific deal but suggest an alternative from the list.
-    4. PROACTIVE: Always end with a helpful question like "Would you like to know the validity for this?" or "Should I check another airline?"
-    """
-    
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"I'm having trouble thinking right now. Error: {str(e)}"
+# --- 5. UI ---
+st.title("✈️ Airline Deal Assistant")
 
-# --- 6. CHAT INTERFACE ---
-st.title("✈️ Smart Airline Deal Assistant")
-st.write("Ask me about airline deals, cabin classes, or validity!")
-
-# Display history
+# Display previous messages
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        st.write(msg["content"])
 
-# User Chat Input
-if user_input := st.chat_input("Ask me anything..."):
-    # Save & Show User Message
+# --- 6. MAIN CHAT LOGIC ---
+if user_input := st.chat_input("Ask for a deal (e.g., Indigo or Etihad)"):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.write(user_input)
 
-    # Generate & Show Assistant Message
     with st.chat_message("assistant"):
-        with st.spinner("Consulting the Deal Sheet..."):
-            full_response = get_ai_response(user_input, df, st.session_state.messages)
-            st.markdown(full_response)
+        response_placeholder = st.empty()
+        
+        # --- STRATEGY: TRY AI FIRST ---
+        ai_success = False
+        if ai_available and not df.empty:
+            try:
+                # We only give the AI the first 100 rows to prevent it from "freezing"
+                context = df.head(100).to_string(index=False)
+                prompt = f"Data: {context}\n\nUser: {user_input}\n\nInstruction: If the deal is in the data, explain it. If not, ask for the airline name."
+                
+                response = model.generate_content(prompt)
+                reply = response.text
+                response_placeholder.write(reply)
+                ai_success = True
+            except:
+                ai_success = False
+
+        # --- STRATEGY: IF AI FAILS, SHOW DATA IMMEDIATELY ---
+        if not ai_success:
+            query = user_input.lower()
+            # Simple keyword search in the dataframe
+            mask = df.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1)
+            filtered_df = df[mask]
             
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+            if not filtered_df.empty:
+                response_placeholder.write("I found these matching deals in the sheet:")
+                st.dataframe(filtered_df)
+                reply = "Displayed matching rows from the sheet."
+            else:
+                reply = "I couldn't find a deal for that. Please try another airline or check your spelling."
+                response_placeholder.write(reply)
+
+    st.session_state.messages.append({"role": "assistant", "content": reply})
