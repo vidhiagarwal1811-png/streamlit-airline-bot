@@ -15,41 +15,39 @@ def load_data():
         df = pd.read_csv(SHEET_URL)
         df.columns = df.columns.str.strip().str.lower()
         return df
-    except Exception as e:
-        st.error(f"Error connecting to data: {e}")
+    except:
         return pd.DataFrame()
 
 df = load_data()
 
-# --- 3. HELPER FUNCTIONS ---
-def parse_date_from_text(text):
-    """Extracts Month and Year from text to create a comparable date object."""
+# --- 3. THE "STRICT" DATE PARSER ---
+def get_comparable_date(text):
+    """Converts text like '31 MAR 26' or 'dec 2026' into a datetime object."""
     if not text or pd.isna(text):
         return None
     text = str(text).lower()
     
-    # Look for Month and Year (e.g., March 2026, 31-Mar-26, etc.)
-    months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-    month_match = None
-    for m in months:
-        if m in text:
-            month_match = m
+    # Month Map
+    months = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    }
+    
+    found_month = None
+    for m_name, m_val in months.items():
+        if m_name in text:
+            found_month = m_val
             break
             
-    year_match = re.search(r'20\d{2}', text)
-    if not year_match: # Support for '26 style
-        short_year = re.search(r"['\s-](\d{2})(\s|$)", text)
-        if short_year:
-            year_str = "20" + short_year.group(1)
-        else:
-            year_str = "2026" # Default
-    else:
-        year_str = year_match.group()
+    # Find Year (looks for 2026 or just 26)
+    year_match = re.search(r'(20\d{2})|(\d{2})$|(\d{2})\s', text)
+    found_year = None
+    if year_match:
+        year_str = year_match.group().strip().replace("'", "")
+        found_year = int(year_str) if len(year_str) == 4 else int("20" + year_str)
 
-    if month_match and year_str:
-        return datetime.strptime(f"{month_match} {year_str}", "%b %Y")
-    elif year_str:
-        return datetime.strptime(year_str, "%Y")
+    if found_month and found_year:
+        return datetime(found_year, found_month, 1)
     return None
 
 # --- 4. SESSION MEMORY ---
@@ -58,32 +56,30 @@ if "messages" not in st.session_state:
 if "current_airline" not in st.session_state:
     st.session_state.current_airline = None
 
-# --- 5. USER INTERFACE ---
+# --- 5. UI ---
 st.title("✈️ Airline Deal Assistant")
-st.markdown("Search for deals by **Airline Name**, **IATA (EY, AI)**, or **Travel Date**.")
+st.write("Current Rules: If travel date > validity, **No Deal** will be shown.")
 
-# Display persistent chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
         if "data" in msg and msg["data"] is not None:
             st.dataframe(pd.DataFrame([msg["data"]]), use_container_width=True)
 
-# --- 6. CHAT LOGIC ---
-if user_input := st.chat_input("Ex: 'Etihad business May 2027'"):
-    # Add user message
+# --- 6. LOGIC ---
+if user_input := st.chat_input("Ex: 'EY dec 2026'"):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
 
     query = user_input.lower().strip()
     
-    # A. Search for Airline
+    # A. Search for Airline (EY, AI, name)
     found_row = None
     for _, row in df.iterrows():
         name = str(row.get('airlines name', '')).lower()
         iata = str(row.get('airlines', '')).lower()
-        if iata in query or name in query:
+        if iata in query or (len(name) > 3 and name in query):
             st.session_state.current_airline = row
             found_row = row
             break
@@ -96,42 +92,34 @@ if user_input := st.chat_input("Ex: 'Etihad business May 2027'"):
     elif "first" in query: cabin = "first"
 
     # C. Date Validation
-    requested_date = parse_date_from_text(query)
+    req_date = get_comparable_date(query)
 
-    # D. Build Response
     with st.chat_message("assistant"):
-        # Use found row or fall back to memory
         active_row = found_row if found_row is not None else st.session_state.current_airline
         
         if active_row is not None:
             airline_name = str(active_row.get('airlines name', 'UNKNOWN')).upper()
-            validity_str = str(active_row.get('validity', 'No data'))
-            validity_date = parse_date_from_text(validity_str)
+            val_str = str(active_row.get('validity', ''))
+            val_date = get_comparable_date(val_str)
 
-            # Check Date Validity
-            if requested_date and validity_date and requested_date > validity_date:
-                response = f"❌ **No Available Deal.** The deals for **{airline_name}** are valid only until **{validity_str}**. Your requested travel date is beyond this period."
-                display_data = None
+            # --- THE LOCKDOWN CHECK ---
+            if req_date and val_date and req_date > val_date:
+                response = f"❌ **No Available Deal for these dates.**\n\nExisting deals for **{airline_name}** expired on **{val_str}**. Please try a date before April 2026."
+                display_data = None # Hide the row
             else:
                 if cabin:
                     price = active_row.get(cabin, "N/A")
-                    response = f"✅ **{airline_name}** {cabin.upper()} deal found: **{price}**.\n\n*Validity: {validity_str}*"
+                    response = f"✅ Deal Found! **{airline_name}** {cabin.upper()} is **{price}** (Valid: {val_str})."
                 else:
-                    response = f"I found the deals for **{airline_name}** (Valid until {validity_str}). Which cabin (Eco, Business, First) would you like to check?"
+                    response = f"I found the deals for **{airline_name}** (Valid: {val_str}). Which cabin (Eco/Bus) do you need?"
                 display_data = active_row
             
-            # Show output
             st.write(response)
             if display_data is not None:
                 st.dataframe(pd.DataFrame([display_data]), use_container_width=True)
             
-            # Save to history
-            st.session_state.messages.append({
-                "role": "assistant", 
-                "content": response, 
-                "data": display_data
-            })
+            st.session_state.messages.append({"role": "assistant", "content": response, "data": display_data})
         else:
-            response = "I couldn't find that airline. Please specify the Airline name or IATA code (e.g., EY, AI)."
-            st.write(response)
-            st.session_state.messages.append({"role": "assistant", "content": response, "data": None})
+            resp = "Airline not found. Try 'EY' or 'Air India'."
+            st.write(resp)
+            st.session_state.messages.append({"role": "assistant", "content": resp, "data": None})
