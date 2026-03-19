@@ -1,85 +1,82 @@
 import streamlit as st
 import pandas as pd
-import google.generativeai as genai
 
 # --- 1. SETUP ---
-st.set_page_config(page_title="Airline Deal Assistant", layout="centered")
+st.set_page_config(page_title="Deal Finder", layout="centered", page_icon="✈️")
 
-# --- 2. AI CONFIGURATION ---
-# This looks for the key you saved in Streamlit Secrets
-if "GEMINI_API_KEY" not in st.secrets:
-    st.error("🚨 SECRET MISSING: Go to Streamlit Cloud Settings > Secrets and add: GEMINI_API_KEY='your_key_here'")
-    st.stop()
-
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error(f"🚨 AI BRAIN ERROR: {e}")
-    st.stop()
-
-# --- 3. DATA LOADING ---
+# --- 2. DATA LOAD ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
 @st.cache_data(ttl=60)
-def load_sheet():
+def load_data():
     try:
         df = pd.read_csv(SHEET_URL)
         df.columns = df.columns.str.strip().str.lower()
         return df
-    except Exception as e:
-        st.error(f"🚨 SHEET ERROR: Could not read Google Sheet. {e}")
-        return None
+    except:
+        return pd.DataFrame()
 
-df = load_sheet()
+df = load_data()
 
-# --- 4. SESSION MEMORY ---
+# --- 3. SESSION STATE (The "Memory") ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "current_airline" not in st.session_state:
+    st.session_state.current_airline = None
 
-# --- 5. USER INTERFACE ---
-st.title("✈️ Smart Deal Assistant")
-st.write("Ask me about airline deals. I remember our conversation!")
+# --- 4. UI ---
+st.title("✈️ Reliable Deal Assistant")
+st.write("Search by Airline name, IATA code (EY, AI, etc.), or Cabin.")
 
 # Display chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# --- 6. CHAT LOGIC ---
-if user_input := st.chat_input("Ask for a deal..."):
-    # Save User Message
+# --- 5. LOGIC ---
+if user_input := st.chat_input("Ex: 'Etihad' or 'What about Business?'"):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
 
+    query = user_input.lower().strip()
+    
+    # --- STEP A: IDENTIFY AIRLINE ---
+    # Check if user mentioned a new airline or IATA code
+    found_row = None
+    for _, row in df.iterrows():
+        name = str(row.get('airlines name', '')).lower()
+        iata = str(row.get('airlines', '')).lower() # Your 'airlines' column has IATA codes like EY
+        
+        if iata in query or name in query:
+            st.session_state.current_airline = row
+            found_row = row
+            break
+            
+    # --- STEP B: IDENTIFY CABIN ---
+    cabin = None
+    if any(x in query for x in ["bus", "business"]): cabin = "bus"
+    elif any(x in query for x in ["eco", "economy"]): cabin = "eco"
+    elif any(x in query for x in ["prem", "premium"]): cabin = "prem. eco"
+    elif "first" in query: cabin = "first"
+
+    # --- STEP C: GENERATE RESPONSE ---
     with st.chat_message("assistant"):
-        if df is not None:
-            # Prepare context for AI (Sheet data + last few messages for memory)
-            data_context = df.head(100).to_string(index=False)
-            history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-5:]])
+        # Case 1: Use Memory if user only asked for a cabin
+        active_row = found_row if found_row is not None else st.session_state.current_airline
+        
+        if active_row is not None:
+            airline_name = active_row['airlines name'].upper()
+            
+            if cabin:
+                deal_val = active_row.get(cabin, "N/A")
+                validity = active_row.get('validity', 'No data')
+                reply = f"The **{cabin.upper()}** deal for **{airline_name}** is **{deal_val}**.\n\n*Validity: {validity}*"
+            else:
+                reply = f"I found the deals for **{airline_name}**. Which cabin (Eco, Business, First) are you looking for?"
+                st.dataframe(pd.DataFrame([active_row])) # Show the full row for context
+        else:
+            reply = "I couldn't find that airline. Please check the name or IATA code (e.g., 'EY' for Etihad)."
 
-            prompt = f"""
-            You are a professional B2B Airline Deal Assistant.
-            DATA:
-            {data_context}
-
-            MEMORY (Previous Chat):
-            {history_context}
-
-            USER INQUIRY: {user_input}
-
-            STRICT RULES:
-            1. If the user asks for a cabin (like 'Business') but doesn't name an airline, check the MEMORY to see which airline was discussed last.
-            2. Answer using ONLY the data provided. 
-            3. Be proactive: if a deal is found, ask if they want to know the validity or exclusions.
-            4. If no deal is found, ask for the airline name or IATA code.
-            """
-
-            try:
-                response = model.generate_content(prompt)
-                full_reply = response.text
-                st.write(full_reply)
-                st.session_state.messages.append({"role": "assistant", "content": full_reply})
-            except Exception as e:
-                st.error(f"🚨 AI RESPONSE ERROR: {e}")
+        st.write(reply)
+        st.session_state.messages.append({"role": "assistant", "content": reply})
