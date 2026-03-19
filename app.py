@@ -136,7 +136,7 @@ if user_input := st.chat_input("Ex: What are the cheapest Indigo deals for March
                         row = filtered_df.iloc[0]
                         deal_val = row.get(cabin_column, "N/A")
                         reply = f"The {cabin_column.upper()} deal for {row['airlines name']} is {deal_val}."
-                        st.write(f"✅ Found via fallback: {reply}")
+                        st.write(reply)
                         st.dataframe(filtered_df)
 
                 if not reply: reply = "I'm sorry, I couldn't find a matching deal in the sheet."
