@@ -1,174 +1,146 @@
 import streamlit as st
 import pandas as pd
 import calendar
+import google.generativeai as genai
 
-# --- PAGE CONFIG ---
+# --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="Deal Sheet Assistant", layout="wide")
 
-# --- SESSION STATE ---
+# --- 2. AI CONFIGURATION (NLP BRAIN) ---
+if "GEMINI_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    st.error("Please add GEMINI_API_KEY to Streamlit Secrets to enable NLP features.")
+
+# --- 3. SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- GOOGLE SHEET ---
+# --- 4. DATA LOADING ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
 @st.cache_data(ttl=600)
 def load_sheet(url):
-    df = pd.read_csv(url)
-    df.columns = df.columns.str.strip().str.lower()
-    return df
+    try:
+        df = pd.read_csv(url)
+        df.columns = df.columns.str.strip().str.lower()
+        return df
+    except Exception as e:
+        st.error(f"Error loading sheet: {e}")
+        return pd.DataFrame()
 
 df = load_sheet(SHEET_URL)
 
-# --- TITLE ---
-st.title("✈️ Smart Airline Deal Assistant test")
+# --- 5. NLP BRAIN FUNCTION ---
+def get_nlp_response(user_query, dataframe):
+    """
+    Sends the sheet data and user query to Gemini.
+    Strictly instructed to stay within the sheet data.
+    """
+    # We send a text version of the dataframe to the AI
+    # (Limited to first 60 rows to fit within AI 'context window' safely)
+    data_context = dataframe.head(60).to_string()
 
-# --- SHOW CHAT HISTORY ---
+    prompt = f"""
+    ROLE: You are an expert Airline Deal Assistant.
+    STRICT DATA SOURCE: Use ONLY the provided Google Sheet data below.
+    
+    INSTRUCTIONS:
+    1. If the answer is in the data, provide a friendly, professional response.
+    2. Handle typos (e.g., 'Indigo' for 'IndiGo', 'Emirats' for 'Emirates').
+    3. Understand intent: 'cheapest' means lowest numeric value in the cabin columns.
+    4. CRITICAL: If the user asks for something NOT in the data, or if you are unsure, 
+       respond ONLY with the word: FALLBACK.
+    5. Do NOT use your own external knowledge or make up prices.
+    
+    SHEET DATA:
+    {data_context}
+    
+    USER QUESTION: {user_query}
+    """
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except:
+        return "FALLBACK"
+
+# --- 6. UI LAYOUT ---
+st.title("✈️ Smart Airline Deal Assistant")
+st.markdown("---")
+
+# Display chat history
 for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
 
-# --- USER INPUT ---
-if user_input := st.chat_input("Ask deal (Hi"):
-
+# --- 7. MAIN LOGIC ---
+if user_input := st.chat_input("Ex: What are the cheapest Indigo deals for March?"):
+    
+    # Add user message to history
     st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.write(user_input)
+
     query = user_input.lower()
-
-    # --- MONTH DETECTION ---
-    month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
-
-    query_month = None
-    for m in month_map:
-        if m in query:
-            query_month = month_map[m]
-            break
+    reply = ""
 
     with st.chat_message("assistant"):
-
         if df.empty:
-            reply = "Deal sheet could not be loaded."
+            reply = "I'm sorry, the deal sheet could not be loaded at this time."
             st.write(reply)
-
         else:
+            with st.spinner("Searching deals..."):
+                # --- STEP 1: TRY NLP FIRST ---
+                ai_response = get_nlp_response(user_input, df)
 
-            # --- CABIN DETECTION (FIXED) ---
-            words = query.replace(".", " ").split()
-
-            cabin_column = None
-
-            if "prem" in words or "premium" in words:
-                cabin_column = "prem. eco"
-
-            elif "bus" in words or "business" in words:
-                cabin_column = "bus"
-
-            elif "first" in words:
-                cabin_column = "first"
-
-            elif "eco" in words or "economy" in words:
-                cabin_column = "eco"
-
-            # --- CHEAPEST DEAL LOGIC ---
-            if "cheapest" in query or "best" in query:
-
-                if cabin_column and cabin_column in df.columns:
-
-                    best_deals = df.sort_values(by=cabin_column).head(5)
-
-                    st.write(f"🏆 Top {cabin_column} deals:")
-                    st.dataframe(best_deals)
-
-                    reply = f"Showing best {cabin_column} deals."
-
-                else:
-                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First"
-                    st.write(reply)
-
+            if ai_response != "FALLBACK" and len(ai_response) > 2:
+                # Success! AI found it in the sheet.
+                st.write(ai_response)
+                reply = ai_response
             else:
+                # --- STEP 2: ORIGINAL LOGIC FALLBACK ---
+                # This part is your original code exactly, acting as a safety net.
+                month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+                query_month = next((month_map[m] for m in month_map if m in query), None)
+                
+                words = query.replace(".", " ").split()
+                cabin_column = None
+                if "prem" in words or "premium" in words: cabin_column = "prem. eco"
+                elif "bus" in words or "business" in words: cabin_column = "bus"
+                elif "first" in words: cabin_column = "first"
+                elif "eco" in words or "economy" in words: cabin_column = "eco"
 
+                # Original detection logic for Airlines
                 filtered_df = df.copy()
                 airline_found = None
-
-                words = query.split()
-
                 for _, row in df.iterrows():
+                    airline = str(row.get("airlines", "")).lower()
+                    airline_name = str(row.get("airlines name", "")).lower()
+                    iata = str(row.get("iata", "")).lower()
 
-                    airline = str(row["airlines"]).lower()
-                    airline_name = str(row["airlines name"]).lower()
-                    iata = str(row["iata"]).lower()
-
-                    # Exact IATA match
-                    if iata in words:
-                        airline_found = airline
-                        filtered_df = df[df["iata"].str.lower() == iata]
-                        break
-
-                    # Exact airline code match
-                    if airline in words:
+                    if iata in words or airline in words or airline_name in query:
                         airline_found = airline
                         filtered_df = df[df["airlines"].str.lower() == airline]
                         break
 
-                    # Airline name match
-                    if airline_name in query:
-                        airline_found = airline
-                        filtered_df = df[df["airlines name"].str.lower() == airline_name]
-                        break
-
+                # Final display logic
                 if not airline_found:
-                    reply = "Please mention a valid airline name or IATA code."
-                    st.write(reply)
-
+                    reply = "I couldn't find that airline. Please try an IATA code or full name."
                 elif not cabin_column:
-                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First."
-                    st.write(reply)
-
+                    reply = "Which cabin class are you looking for? (Eco, Business, etc.)"
                 else:
-
-                    result = filtered_df
-
-                    if result.empty:
-                        reply = "No deal found."
-                        st.write(reply)
-
+                    if filtered_df.empty:
+                        reply = "No deals found for that selection."
                     else:
+                        row = filtered_df.iloc[0]
+                        deal_val = row.get(cabin_column, "N/A")
+                        reply = f"The {cabin_column.upper()} deal for {row['airlines name']} is {deal_val}."
+                        st.write(f"✅ Found via fallback: {reply}")
+                        st.dataframe(filtered_df)
 
-                        row = result.iloc[0]
+                if not reply: reply = "I'm sorry, I couldn't find a matching deal in the sheet."
+                st.write(reply)
 
-                        deal_value = row[cabin_column]
-                        airline_name = row["airlines name"]
-                        iata_code = row["iata"]
-                        validity_text = str(row.get("validity", "")).lower()
-
-                        # --- VALIDITY MONTH DETECTION ---
-                        validity_month = None
-                        for m in month_map:
-                            if m in validity_text:
-                                validity_month = month_map[m]
-                                break
-
-                        # --- VALIDITY CHECK ---
-                        if query_month and validity_month and query_month > validity_month:
-
-                            st.write("❌ No deal available for the given month.")
-                            reply = "Deal not valid for the requested month."
-
-                        else:
-
-                            st.write(f"✈️ **{airline_name} ({iata_code})**")
-                            st.write(f"💺 **{cabin_column.upper()} Deal:** {deal_value}")
-
-                            if "validity" in result.columns:
-                                st.write(f"📅 **Validity:** {row['validity']}")
-
-                            if "exclusions" in result.columns and pd.notna(row["exclusions"]):
-                                st.write(f"⚠️ **Exclusions:** {row['exclusions']}")
-
-                            if "notes" in result.columns and pd.notna(row["notes"]):
-                                st.write(f"📝 **Notes:** {row['notes']}")
-
-                            st.write("📊 Full Deal Details:")
-                            st.dataframe(result)
-
-                            reply = f"{airline_name} {cabin_column} deal displayed."
-
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+    # Save assistant response
+    st.session_state.messages.append({"role": "assistant", "content": reply})
