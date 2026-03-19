@@ -21,7 +21,7 @@ def load_sheet(url):
 df = load_sheet(SHEET_URL)
 
 # --- TITLE ---
-st.title("✈️ Smart Airline Deal Assistant")
+st.title("✈️ Smart Airline Deal Assistant test")
 
 # --- SHOW CHAT HISTORY ---
 for msg in st.session_state.messages:
