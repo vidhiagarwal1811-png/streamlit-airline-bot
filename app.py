@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime
 
 # --- 1. SETUP ---
 st.set_page_config(page_title="Strict Deal Bot", layout="wide")
@@ -20,20 +19,21 @@ def load_data():
 
 df = load_data()
 
-# --- 3. THE "STRICT" DATE COMPARATOR ---
+# --- 3. THE NUMERIC DATE SCORER ---
 def get_date_score(text):
-    """Converts 'Dec 2026' or '31 Mar 26' into YYYYMM (e.g., 202612)."""
+    """Converts 'Dec 2026' or '31 Mar 26' into a comparable number like 202612."""
     if not text or pd.isna(text): return None
     text = str(text).lower()
+    
     months = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
     
-    # 1. Find Month
-    m_val = next((v for k, v in months.items() if k in text), None)
+    # Extract Month
+    m_val = next((v for k, v in months.items() if k in text), 0)
     
-    # 2. Find Year (Handles 2026, 26, or '26)
-    y_match = re.search(r'(20\d{2})|(\d{2})$|(\d{2})\s', text)
+    # Extract Year (Handles 2026 or 26)
+    y_match = re.search(r'(20\d{2})|(?<=\s)(\d{2})$|(?<=-)(\d{2})$|(\d{2})\s|(\d{2})$', text)
     
-    if m_val and y_match:
+    if m_val > 0 and y_match:
         y_str = "".join(filter(str.isdigit, y_match.group()))
         y_val = int(y_str) if len(y_str) == 4 else int("20" + y_str)
         return (y_val * 100) + m_val
@@ -52,12 +52,12 @@ for msg in st.session_state.messages:
             st.dataframe(pd.DataFrame([msg["table"]]), use_container_width=True)
 
 # --- 6. CORE LOGIC ---
-if user_input := st.chat_input("Ex: 'EY dec 2026'"):
+if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"): st.write(user_input)
 
     query = user_input.lower().strip()
-    user_date_score = get_date_score(query)
+    user_score = get_date_score(query)
 
     # Search for Airline
     target_row = None
@@ -72,28 +72,23 @@ if user_input := st.chat_input("Ex: 'EY dec 2026'"):
         if target_row is not None:
             val_text = str(target_row.get('validity', ''))
             val_score = get_date_score(val_text)
-            airline_name = str(target_row.get('airlines name', '')).upper()
+            airline_display = str(target_row.get('airlines name', '')).upper()
 
-            # --- THE "HARD BLOCK" CHECK ---
-            is_expired = False
-            if user_date_score and val_score:
-                if user_date_score > val_score: # e.g. 202612 > 202603
-                    is_expired = True
-
-            if is_expired:
-                final_reply = f"❌ **No Available Deal.**\n\nThe deals for **{airline_name}** are only valid until **{val_text}**. Your travel date is not covered."
-                final_table = None # Forces the table to stay HIDDEN
+            # --- THE LOCKDOWN CHECK ---
+            # If the user's requested date is HIGHER than the validity, we BLOCK.
+            if user_score and val_score and user_score > val_score:
+                reply = f"❌ **No Available Deal.**\n\nThe deals for **{airline_display}** expired on **{val_text}**. Your requested date is outside the validity."
+                final_table = None # Table is HIDDEN
             else:
-                # Identify Cabin
                 cabin = next((c for c in ["bus", "eco", "first"] if c in query or (c=="bus" and "business" in query)), "eco")
                 price = target_row.get(cabin, "N/A")
-                final_reply = f"✅ Deal Found! **{airline_name}** {cabin.upper()} is **{price}** (Valid: {val_text})."
-                final_table = target_row # Shows table only if valid
+                reply = f"✅ Deal Found! **{airline_display}** {cabin.upper()} is **{price}** (Valid: {val_text})."
+                final_table = target_row # Table is SHOWN
             
-            st.write(final_reply)
+            st.write(reply)
             if final_table is not None:
                 st.dataframe(pd.DataFrame([final_table]), use_container_width=True)
             
-            st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": final_table})
+            st.session_state.messages.append({"role": "assistant", "content": reply, "table": final_table})
         else:
-            st.write("Airline not found. Please try 'EY' or 'Air India'.")
+            st.write("I couldn't find that airline. Please try 'EY' or 'Air India'.")
