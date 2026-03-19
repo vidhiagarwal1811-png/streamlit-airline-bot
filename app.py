@@ -6,14 +6,14 @@ import google.generativeai as genai
 st.set_page_config(page_title="Deal Assistant", layout="centered")
 
 # --- 2. THE BRAIN CHECK ---
-# This checks if your Secret is actually working
 if "GEMINI_API_KEY" not in st.secrets:
     st.error("🚨 SECRET ERROR: I can't find 'GEMINI_API_KEY' in your App Secrets.")
     st.stop()
 else:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # UPDATED: We use 'gemini-1.5-flash-latest' to fix the 404 error
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
     except Exception as e:
         st.error(f"🚨 BRAIN ERROR: {e}")
         st.stop()
@@ -50,9 +50,27 @@ if user_input := st.chat_input("Ask me for a deal..."):
 
     with st.chat_message("assistant"):
         if df is not None:
-            # Tell the AI to look at the sheet data
-            sheet_text = df.to_string(index=False)
-            prompt = f"Data: {sheet_text}\n\nUser Question: {user_input}\n\nAssistant:"
+            # We only send the top 100 rows to keep it fast and avoid timeouts
+            sheet_text = df.head(100).to_string(index=False)
+            
+            # Creating a simple history for memory
+            history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-3:]])
+            
+            prompt = f"""
+            You are a helpful Airline Deal Assistant.
+            DATA:
+            {sheet_text}
+            
+            CONVERSATION HISTORY:
+            {history_context}
+            
+            USER QUESTION: {user_input}
+            
+            INSTRUCTIONS:
+            - If the user is vague, ask which airline or cabin they need.
+            - If they previously mentioned an airline, assume they are still talking about it.
+            - Be professional and proactive.
+            """
             
             try:
                 response = model.generate_content(prompt)
@@ -60,4 +78,5 @@ if user_input := st.chat_input("Ask me for a deal..."):
                 st.write(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
             except Exception as e:
+                # If it still fails, we show a helpful error
                 st.error(f"🚨 AI ERROR: {e}")
