@@ -2,86 +2,96 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 
-# --- 1. SETTINGS & AI ---
-st.set_page_config(page_title="Proactive Deal Bot", layout="centered")
+# --- 1. SETUP & THEMES ---
+st.set_page_config(page_title="Proactive Deal Assistant", layout="centered", page_icon="✈️")
 
+# --- 2. CONNECT TO THE BRAIN (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    try:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        st.error(f"Brain connection failed: {e}")
 else:
-    st.error("Please add your API Key to Secrets.")
+    st.error("Missing GEMINI_API_KEY in Streamlit Secrets!")
 
+# --- 3. SESSION MEMORY ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- 2. DATA LOAD ---
+# --- 4. LOAD THE DATA (THE GOOGLE SHEET) ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
-@st.cache_data(ttl=300)
-def load_data():
-    df = pd.read_csv(SHEET_URL)
-    df.columns = df.columns.str.strip().str.lower()
-    return df
+@st.cache_data(ttl=60) # Refreshes every minute
+def load_live_deals():
+    try:
+        # We read the sheet and force everything to string to avoid math errors
+        df = pd.read_csv(SHEET_URL)
+        df.columns = df.columns.str.strip().str.lower()
+        return df
+    except Exception as e:
+        st.error(f"Could not read Google Sheet: {e}")
+        return pd.DataFrame()
 
-df = load_data()
+df = load_live_deals()
 
-# --- 3. THE "PROACTIVE" BRAIN ---
-def get_proactive_reply(user_input, dataframe, history):
-    # Prepare the data context
-    data_str = dataframe.head(100).to_string()
+# --- 5. THE BRAIN FUNCTION (REBUILT) ---
+def get_ai_response(user_input, dataframe, history):
+    # Convert the actual sheet data into a clean text block for the AI
+    # This ensures the AI is actually "Reading" the sheet
+    sheet_as_text = dataframe.to_string(index=False)
     
-    # Format History
-    chat_hist = ""
+    # Create the conversation thread
+    chat_context = ""
     for m in history[-5:]:
-        chat_hist += f"{m['role']}: {m['content']}\n"
+        chat_context += f"{m['role']}: {m['content']}\n"
 
+    # THE MASTER PROMPT
     prompt = f"""
-    You are a smart, proactive Airline Sales Assistant.
+    SYSTEM: You are a professional B2B Travel Sales Assistant. 
+    You have DIRECT ACCESS to the following live Deal Sheet data.
     
-    YOUR GOAL: Help the user find the best deal from the sheet. 
-    
-    STRATEGY:
-    1. READ INTENT: Is the user looking for a specific airline? A specific cabin? Or just browsing?
-    2. BE PROACTIVE: If the user is vague (e.g., "Show me deals"), ask them which airline or destination they prefer.
-    3. USE MEMORY: If they previously mentioned an airline, and now say "any business class?", assume they mean that same airline.
-    4. DATA-DRIVEN: Only provide facts found in this sheet:
-    {data_str}
+    LIVE DATA FROM GOOGLE SHEET:
+    {sheet_as_text}
     
     CONVERSATION HISTORY:
-    {chat_hist}
+    {chat_context}
     
-    USER JUST SAID: {user_input}
+    USER INQUIRY: {user_input}
     
-    RESPONSE RULES:
-    - If the answer is in the sheet, give it and ask a follow-up (e.g., "Would you like to see the exclusions for this deal?").
-    - If information is missing (like cabin class), ASK the user for it.
-    - If the airline is not in the sheet, suggest the closest match or ask them to try another one.
-    - KEEP IT LIVELY. No boring "No deal found" messages.
+    STRICT RULES:
+    1. READ INTENT: If the user says 'Hi' or is vague, ask them what airline or cabin they are looking for.
+    2. MEMORY: If they previously asked about 'Air India' and now say 'what about business?', you MUST answer for Air India Business class.
+    3. PRECISION: Only give deals that exist in the table above. If an airline isn't there, say you don't have that specific deal but suggest an alternative from the list.
+    4. PROACTIVE: Always end with a helpful question like "Would you like to know the validity for this?" or "Should I check another airline?"
     """
     
     try:
         response = model.generate_content(prompt)
         return response.text
-    except:
-        return "I'm having a little trouble connecting to my brain. Can you try asking about a specific airline?"
+    except Exception as e:
+        return f"I'm having trouble thinking right now. Error: {str(e)}"
 
-# --- 4. THE UI ---
-st.title("✈️ Your Proactive Travel Partner")
+# --- 6. CHAT INTERFACE ---
+st.title("✈️ Smart Airline Deal Assistant")
+st.write("Ask me about airline deals, cabin classes, or validity!")
 
 # Display history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User input
-if user_input := st.chat_input("Type 'Hi' or ask for a deal..."):
+# User Chat Input
+if user_input := st.chat_input("Ask me anything..."):
+    # Save & Show User Message
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
+    # Generate & Show Assistant Message
     with st.chat_message("assistant"):
-        with st.spinner("Checking deals..."):
-            ai_response = get_proactive_reply(user_input, df, st.session_state.messages)
-            st.markdown(ai_response)
+        with st.spinner("Consulting the Deal Sheet..."):
+            full_response = get_ai_response(user_input, df, st.session_state.messages)
+            st.markdown(full_response)
             
-    st.session_state.messages.append({"role": "assistant", "content": ai_response})
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
