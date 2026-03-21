@@ -142,6 +142,12 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
             # --- SUCCESS WITH CABINS ---
             elif results:
                 final_df = pd.DataFrame(results)
+
+                # --- REORDER COLUMNS FOR DISPLAY ---
+                base_cols = ["Airlines", "Airlines Name", "IATA"] + [c.upper() for c in cabins_found] + ["Validity", "Exclusions"]
+                remaining_cols = [c for c in final_df.columns if c not in base_cols]
+                final_df = final_df[base_cols + remaining_cols]
+
                 final_reply = f"✅ Found {len(results)} deal entries for **{airline_display_name}**."
                 final_table = final_df
 
