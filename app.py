@@ -46,7 +46,7 @@ for msg in st.session_state.messages:
             st.dataframe(msg["table"], use_container_width=True)
 
 # --- 5. CHAT LOGIC ---
-st.title("✈️ Smart Airline Deal Assistant Test")
+st.title("✈️ Smart Airline Deal Assistant Test1")
 
 if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
     st.session_state.messages.append({"role": "user", "content": user_input})
