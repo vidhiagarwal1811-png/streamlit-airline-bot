@@ -5,7 +5,8 @@ import openai
 import json
 
 # --- 1. SETUP & DATA ---
-st.set_page_config(page_title="Smart Airline Deal Assistant Test", layout="wide", page_icon="✈️")
+st.set_page_config(page_title="Smart Airline Deal Assistant", layout="wide", page_icon="✈️")
+
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
 @st.cache_data(ttl=60)
@@ -39,11 +40,11 @@ for key in ["messages", "pending_rows", "last_user_score", "last_cabins", "last_
         st.session_state[key] = None if key != "messages" else []
 
 # --- 4. OPENAI API SETUP ---
-openai.api_key = st.secrets.get("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", "")
+openai.api_key = st.secrets.get("OPENAI_API_KEY", "")
 
 def query_gen_ai(prompt: str):
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2
@@ -61,7 +62,7 @@ for msg in st.session_state.messages:
             st.dataframe(msg["table"], use_container_width=True)
 
 # --- 6. CHAT LOGIC ---
-st.title("✈️ Smart Airline Deal Assistant Test (Gen AI Enhanced)")
+st.title("✈️ Smart Airline Deal Assistant (Gen AI Enhanced)")
 
 if user_input := st.chat_input("Ex: 'Show me business and economy deals for Air Canada in Dec 2026'"):
 
