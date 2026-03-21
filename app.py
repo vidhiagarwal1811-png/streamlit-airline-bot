@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 # --- 1. SETUP & DATA ---
-st.set_page_config(page_title="Smart Airline Deal Assistant Test3", layout="wide", page_icon="✈️")
+st.set_page_config(page_title="Smart Airline Deal Assistant Test", layout="wide", page_icon="✈️")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
@@ -39,6 +39,8 @@ if "pending_rows" not in st.session_state:
     st.session_state.pending_rows = None
 if "last_user_score" not in st.session_state:
     st.session_state.last_user_score = None
+if "last_cabins" not in st.session_state:
+    st.session_state.last_cabins = None
 
 # --- 4. DISPLAY CHAT HISTORY ---
 for msg in st.session_state.messages:
@@ -48,7 +50,7 @@ for msg in st.session_state.messages:
             st.dataframe(msg["table"], use_container_width=True)
 
 # --- 5. CHAT LOGIC ---
-st.title("✈️ Smart Airline Deal Assistant Test3")
+st.title("✈️ Smart Airline Deal Assistant Test")
 
 if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -63,13 +65,17 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
         st.session_state.last_user_score = user_score
     active_score = st.session_state.last_user_score
 
-    # Identify Cabin
+    # --- CABIN PARSING & MEMORY ---
     cabin_map = {
         "bus": "bus", "business": "bus",
         "eco": "eco", "economy": "eco",
         "first": "first", "prem": "prem. eco"
     }
-    found_cabin = next((v for k, v in cabin_map.items() if k in query), None)
+    cabins_found = [v for k, v in cabin_map.items() if k in query]
+    if cabins_found:
+        st.session_state.last_cabins = cabins_found
+    else:
+        cabins_found = st.session_state.last_cabins
 
     # --- AIRLINE SEARCH (MULTIPLE ROWS) ---
     matched_rows = []
@@ -103,29 +109,29 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
                 if active_score and sheet_score and active_score > sheet_score:
                     continue
 
-                if found_cabin:
-                    # --- RETURN ONLY SELECTED CABIN + KEY COLUMNS ---
-                    row_dict = {
-                        "airlines": row.get("airlines"),
-                        "airlines name": row.get("airlines name"),
-                        "code": row.get("code"),
-                        "cabin": found_cabin.upper(),
-                        "price": row.get(found_cabin, "N/A"),
-                        "validity": val_text,
-                        "exclusions": excl_text
-                        
-                    }
-                    results.append(row_dict)
+                # --- MULTI-CABIN SUPPORT ---
+                if cabins_found:
+                    for cabin in cabins_found:
+                        row_dict = {
+                            "airlines": row.get("airlines"),
+                            "airlines name": row.get("airlines name"),
+                            "Iata": row.get("IATA"),
+                            "validity": val_text,
+                            "exclusions": excl_text,
+                            "cabin": cabin.upper(),
+                            "price": row.get(cabin, "N/A")
+                        }
+                        results.append(row_dict)
 
             # --- CABIN NOT PROVIDED ---
-            if not found_cabin:
-                final_reply = f"I found {len(matched_rows)} deals for **{airline_name}**. Which cabin: **Economy, Business, or First?**"
+            if not cabins_found:
+                final_reply = f"I found {len(matched_rows)} deals for **{airline_name}**. Which cabin(s): **Economy, Business, or First?**"
                 final_table = pd.DataFrame(matched_rows)
 
-            # --- SUCCESS WITH CABIN ---
+            # --- SUCCESS WITH CABINS ---
             elif results:
                 final_df = pd.DataFrame(results)
-                final_reply = f"✅ Found {len(results)} deals for **{airline_name}**."
+                final_reply = f"✅ Found {len(results)} deal entries for **{airline_name}**."
                 final_table = final_df
 
             # --- NO VALID DEALS AFTER DATE FILTER ---
