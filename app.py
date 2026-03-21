@@ -62,12 +62,13 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
     cabin_map = {"bus": "bus", "business": "bus", "eco": "eco", "economy": "eco", "first": "first", "prem": "prem. eco"}
     found_cabin = next((v for k, v in cabin_map.items() if k in query), None)
 
-    # Search for Airline (UPDATED: collect all matches)
+    # --- UPDATED AIRLINE SEARCH (FIXED) ---
     matched_rows = []
     for _, row in df.iterrows():
-        iata = str(row.get('airlines', '')).lower()
-        name = str(row.get('airlines name', '')).lower()
-        if iata in query or (len(name) > 3 and name in query):
+        iata = str(row.get('airlines', '')).strip().lower()
+        name = str(row.get('airlines name', '')).strip().lower()
+
+        if (iata and iata in query) or (name and name in query):
             matched_rows.append(row)
 
     with st.chat_message("assistant"):
@@ -85,7 +86,7 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
                 airline_name = str(row.get('airlines name', '')).upper()
                 active_score = user_score if user_score else st.session_state.last_user_score
 
-                # DATE BLOCK (skip expired deals)
+                # DATE FILTER (skip expired)
                 if active_score and sheet_score and active_score > sheet_score:
                     continue
 
@@ -122,7 +123,11 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
             if final_table is not None:
                 st.dataframe(final_table, use_container_width=True)
 
-            st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": final_table})
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": final_reply,
+                "table": final_table
+            })
 
         else:
             resp = "I couldn't find that airline. Please try 'EY' or 'AI'."
