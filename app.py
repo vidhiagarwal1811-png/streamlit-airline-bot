@@ -55,6 +55,27 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
     query = user_input.lower().strip()
     user_score = get_date_score(query)
 
+    # --- AIRLINE DETECTION ---
+    current_airline_in_query = None
+    for _, row in df.iterrows():
+        airline_code = str(row.get('Airlines', '')).strip().lower()
+        airline_name = str(row.get('Airlines Name', '')).strip().lower()
+        if airline_code in query or airline_name in query:
+            current_airline_in_query = {"Airlines": airline_code, "Airlines Name": airline_name}
+            break
+
+    # --- RESET CONTEXT IF AIRLINE CHANGED ---
+    if st.session_state.last_airline is not None and current_airline_in_query is not None:
+        if (current_airline_in_query["Airlines"] != st.session_state.last_airline["Airlines"]
+            or current_airline_in_query["Airlines Name"] != st.session_state.last_airline["Airlines Name"]):
+            st.session_state.last_user_score = None
+            st.session_state.last_cabins = None
+            st.session_state.pending_rows = None
+            st.session_state.last_airline = current_airline_in_query
+    elif current_airline_in_query is not None:
+        # first time setting the airline
+        st.session_state.last_airline = current_airline_in_query
+
     # --- DATE MEMORY ---
     if user_score:
         st.session_state.last_user_score = user_score
