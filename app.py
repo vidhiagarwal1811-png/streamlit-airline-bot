@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 # --- 1. SETUP & DATA ---
-st.set_page_config(page_title="Smart Airline Deal Assistant Test", layout="wide", page_icon="✈️")
+st.set_page_config(page_title="Smart Airline Deal Assistant Test1", layout="wide", page_icon="✈️")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
