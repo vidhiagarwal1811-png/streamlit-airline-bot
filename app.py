@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import re
+import openai
+import json
 
 # --- 1. SETUP & DATA ---
 st.set_page_config(page_title="Smart Airline Deal Assistant Test", layout="wide", page_icon="✈️")
-
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
 @st.cache_data(ttl=60)
@@ -37,75 +38,104 @@ for key in ["messages", "pending_rows", "last_user_score", "last_cabins", "last_
     if key not in st.session_state:
         st.session_state[key] = None if key != "messages" else []
 
-# --- 4. DISPLAY CHAT HISTORY ---
+# --- 4. OPENAI API SETUP ---
+openai.api_key = st.secrets.get("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", "")
+
+def query_gen_ai(prompt: str):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.warning(f"Gen AI error: {e}")
+        return None
+
+# --- 5. DISPLAY CHAT HISTORY ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "table" in msg and msg["table"] is not None:
             st.dataframe(msg["table"], use_container_width=True)
 
-# --- 5. CHAT LOGIC ---
-st.title("✈️ Smart Airline Deal Assistant Test")
+# --- 6. CHAT LOGIC ---
+st.title("✈️ Smart Airline Deal Assistant Test (Gen AI Enhanced)")
 
-if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
+if user_input := st.chat_input("Ex: 'Show me business and economy deals for Air Canada in Dec 2026'"):
+
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
 
-    query = user_input.lower().strip()
-    user_score = get_date_score(query)
+    # --- 6A. Use Gen AI to extract airline, cabins, date ---
+    structured_prompt = (
+        f"Extract airline code or name, cabins, and travel date from this query:\n'{user_input}'\n"
+        "Return as JSON with keys: airline, cabins (list), date."
+    )
+    gen_ai_output = query_gen_ai(structured_prompt)
+    airline_query, cabins_found, user_date = None, [], None
 
-    # --- AIRLINE DETECTION ---
-    current_airline_in_query = None
-    for _, row in df.iterrows():
-        airline_code = str(row.get('Airlines', '')).strip().lower()
-        airline_name = str(row.get('Airlines Name', '')).strip().lower()
-        if airline_code in query or airline_name in query:
-            current_airline_in_query = {"Airlines": airline_code, "Airlines Name": airline_name}
-            break
+    if gen_ai_output:
+        try:
+            structured_data = json.loads(gen_ai_output)
+            airline_query = structured_data.get("airline")
+            cabins_found = structured_data.get("cabins", [])
+            user_date = structured_data.get("date")
+        except:
+            st.warning("Could not parse AI response. Falling back to regex parsing.")
+            airline_query = user_input
+            cabins_found = []
+            user_date = None
+    else:
+        airline_query = user_input
 
-    # --- RESET CONTEXT IF AIRLINE CHANGED ---
-    if st.session_state.last_airline is not None and current_airline_in_query is not None:
-        if (current_airline_in_query["Airlines"] != st.session_state.last_airline["Airlines"]
-            or current_airline_in_query["Airlines Name"] != st.session_state.last_airline["Airlines Name"]):
-            st.session_state.last_user_score = None
-            st.session_state.last_cabins = None
-            st.session_state.pending_rows = None
-            st.session_state.last_airline = current_airline_in_query
-    elif current_airline_in_query is not None:
-        # first time setting the airline
-        st.session_state.last_airline = current_airline_in_query
-
-    # --- DATE MEMORY ---
+    # --- 6B. Update session date if provided ---
+    user_score = get_date_score(user_date)
     if user_score:
         st.session_state.last_user_score = user_score
     active_score = st.session_state.last_user_score
 
-    # --- CABIN PARSING & MEMORY ---
-    cabin_map = {
-        "bus": "Bus", "business": "Bus",
-        "eco": "Eco", "economy": "Eco",
-        "first": "First", "prem": "Prem. eco"
-    }
-    cabins_found = [v for k, v in cabin_map.items() if k in query]
+    # --- 6C. Cabin memory ---
+    cabin_map = {"bus": "Bus", "business": "Bus", "eco": "Eco", "economy": "Eco",
+                 "first": "First", "prem": "Prem. eco"}
     if cabins_found:
-        st.session_state.last_cabins = cabins_found
+        st.session_state.last_cabins = [cabin_map.get(c.lower(), c) for c in cabins_found]
     else:
         cabins_found = st.session_state.last_cabins
 
-    # --- AIRLINE SEARCH ---
+    # --- 6D. Airline reset if changed ---
+    current_airline_in_query = None
+    for _, row in df.iterrows():
+        airline_code = str(row.get('Airlines', '')).strip().lower()
+        airline_name = str(row.get('Airlines Name', '')).strip().lower()
+        if airline_query and (airline_code in airline_query.lower() or airline_name in airline_query.lower()):
+            current_airline_in_query = {"Airlines": airline_code, "Airlines Name": airline_name}
+            break
+
+    if st.session_state.last_airline and current_airline_in_query:
+        if (current_airline_in_query["Airlines"] != st.session_state.last_airline["Airlines"] or
+            current_airline_in_query["Airlines Name"] != st.session_state.last_airline["Airlines Name"]):
+            st.session_state.last_user_score = None
+            st.session_state.last_cabins = None
+            st.session_state.pending_rows = None
+            st.session_state.last_airline = current_airline_in_query
+    elif current_airline_in_query:
+        st.session_state.last_airline = current_airline_in_query
+
+    # --- 6E. Search matching rows ---
     matched_rows = []
     airline_found = False
     for _, row in df.iterrows():
         airline_code = str(row.get('Airlines', '')).strip().lower()
         airline_name = str(row.get('Airlines Name', '')).strip().lower()
-        if airline_code in query or airline_name in query:
+        if airline_query and (airline_code in airline_query.lower() or airline_name in airline_query.lower()):
             matched_rows.append(row)
             airline_found = True
             st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": airline_name}
 
-    # --- AIRLINE CONTEXT FALLBACK ---
-    if not airline_found and st.session_state.last_airline is not None:
+    if not airline_found and st.session_state.last_airline:
         last_code = st.session_state.last_airline["Airlines"]
         last_name = st.session_state.last_airline["Airlines Name"]
         for _, row in df.iterrows():
@@ -116,12 +146,10 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
 
     with st.chat_message("assistant"):
 
-        # --- PENDING CONTEXT ---
-        if not matched_rows and st.session_state.pending_rows is not None:
+        if not matched_rows and st.session_state.pending_rows:
             matched_rows = st.session_state.pending_rows
 
         if matched_rows:
-            # Only store pending rows if cabin not provided yet
             if not cabins_found:
                 st.session_state.pending_rows = matched_rows
             else:
@@ -136,43 +164,31 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 sheet_score = get_date_score(val_text)
                 airline_display_name = str(row.get('Airlines Name', '')).upper()
 
-                # --- DATE FILTER ---
                 if active_score and sheet_score and active_score > sheet_score:
                     continue
 
-                # --- SINGLE ROW MULTI-CABIN OUTPUT ---
                 if cabins_found:
-                    row_dict = row.to_dict()  # keep all columns
+                    row_dict = row.to_dict()
                     row_dict["Exclusions"] = excl_text
-                    # Remove unrequested cabin columns
                     cabin_columns = ["First", "Bus", "Prem. eco", "Eco"]
                     for col in cabin_columns:
                         if col not in cabins_found:
                             row_dict.pop(col, None)
-                    # Ensure requested cabins uppercase in table
                     for cabin in cabins_found:
                         if cabin in row_dict:
                             row_dict[cabin.upper()] = row_dict.pop(cabin)
                     results.append(row_dict)
 
-            # --- CABIN NOT PROVIDED ---
             if not cabins_found:
                 final_reply = f"I found {len(matched_rows)} deals for **{airline_display_name}**. Which cabin(s): **Economy, Business, or First?**"
                 final_table = pd.DataFrame(matched_rows)
-
-            # --- SUCCESS WITH CABINS ---
             elif results:
                 final_df = pd.DataFrame(results)
-
-                # --- REORDER COLUMNS FOR DISPLAY, EXCLUDE S.No ---
                 base_cols = ["Airlines", "Airlines Name", "IATA"] + [c.upper() for c in cabins_found] + ["Validity", "Exclusions"]
-                remaining_cols = [c for c in final_df.columns if c not in base_cols and c != "S.No"]  # exclude S.No
+                remaining_cols = [c for c in final_df.columns if c not in base_cols and c != "S.No"]
                 final_df = final_df[base_cols + remaining_cols]
-
                 final_reply = f"✅ Found {len(results)} deal entries for **{airline_display_name}**."
                 final_table = final_df
-
-            # --- NO VALID DEALS AFTER DATE FILTER ---
             else:
                 final_reply = f"❌ No valid deals found for **{airline_display_name}**."
                 final_table = None
