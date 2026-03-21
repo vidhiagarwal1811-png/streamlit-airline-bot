@@ -40,7 +40,7 @@ for key in ["messages", "pending_rows", "last_user_score", "last_cabins", "last_
         st.session_state[key] = None if key != "messages" else []
 
 # --- 4. OPENAI API SETUP ---
-openai.api_key = st.secrets.get("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", "")
+openai.api_key = st.secrets("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", "")
 
 def query_gen_ai(prompt: str):
     try:
