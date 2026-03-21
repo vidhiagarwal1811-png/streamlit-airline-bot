@@ -94,7 +94,12 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
         if matched_rows:
 
             # --- STORE CONTEXT ---
-            st.session_state.pending_rows = matched_rows
+            # Only store pending rows if cabin is not specified yet
+            if not cabins_found:
+                st.session_state.pending_rows = matched_rows
+            else:
+                # Clear pending rows after cabin(s) processed to avoid duplicates
+                st.session_state.pending_rows = None
 
             results = []
             airline_name = ""
@@ -113,13 +118,12 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
                 if cabins_found:
                     for cabin in cabins_found:
                         row_dict = {
-                            "airlines": row.get("airlines"),
+                            "iata": row.get("iata"),
                             "airlines name": row.get("airlines name"),
-                            "Iata": row.get("IATA"),
                             "validity": val_text,
                             "exclusions": excl_text,
                             "cabin": cabin.upper(),
-                            "price": row.get(cabin, "N/A")
+                            "deal": row.get(cabin, "N/A")
                         }
                         results.append(row_dict)
 
