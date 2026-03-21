@@ -114,18 +114,18 @@ if user_input := st.chat_input("Ex: 'EY eco dec 2026'"):
                 if active_score and sheet_score and active_score > sheet_score:
                     continue
 
-                # --- MULTI-CABIN SUPPORT ---
+                # --- SINGLE ROW MULTI-CABIN OUTPUT ---
                 if cabins_found:
+                    row_dict = {
+                        "iata": row.get("airlines"),
+                        "airlines name": row.get("airlines name"),
+                        "validity": val_text,
+                        "exclusions": excl_text
+                    }
+                    # Add requested cabins as columns
                     for cabin in cabins_found:
-                        row_dict = {
-                            "iata": row.get("iata"),
-                            "airlines name": row.get("airlines name"),
-                            "validity": val_text,
-                            "exclusions": excl_text,
-                            "cabin": cabin.upper(),
-                            "deal": row.get(cabin, "N/A")
-                        }
-                        results.append(row_dict)
+                        row_dict[cabin.upper()] = row.get(cabin, "N/A")
+                    results.append(row_dict)
 
             # --- CABIN NOT PROVIDED ---
             if not cabins_found:
