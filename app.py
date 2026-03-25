@@ -11,25 +11,43 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGn
 def load_data():
     try:
         df = pd.read_csv(SHEET_URL)
-        df.columns = df.columns.astype(str).str.strip()  # ✅ FIX: ensure clean column names
+        df.columns = df.columns.astype(str).str.strip()
         return df
     except:
         return pd.DataFrame()
 
 df = load_data()
 
-# --- 2. DATE SCORER ---
+# --- 2. DATE SCORER (UPDATED) ---
 def get_date_score(text):
     if not text or pd.isna(text):
         return None
+
     text = str(text).lower()
-    months = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
-    m_val = next((v for k, v in months.items() if k in text), 0)
-    y_match = re.findall(r'\b20\d{2}\b|\b\d{2}\b', text)
-    if not y_match or m_val == 0:
+
+    months = {
+        'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
+        'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12
+    }
+
+    # --- FIND MONTH ---
+    m_val = None
+    for k, v in months.items():
+        if k in text:
+            m_val = v
+            break
+
+    if not m_val:
         return None
+
+    # --- FIND YEAR ---
+    y_match = re.findall(r'\b20\d{2}\b|\b\d{2}\b', text)
+    if not y_match:
+        return None
+
     y_str = y_match[-1]
     y_val = int(y_str) if len(y_str) == 4 else int("20" + y_str)
+
     return (y_val * 100) + m_val
 
 # --- 3. SESSION STATE ---
@@ -43,7 +61,6 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
         if "table" in msg and msg["table"] is not None:
 
-            # ✅ FIX: CLEAN BEFORE DISPLAY
             table = msg["table"].copy()
             table.columns = table.columns.astype(str).str.strip()
             table = table.loc[:, ~table.columns.duplicated()]
@@ -139,8 +156,12 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 sheet_score = get_date_score(val_text)
                 airline_display_name = str(row.get('Airlines Name', '')).upper()
 
-                if active_score and sheet_score and active_score > sheet_score:
-                    continue
+                # ✅ UPDATED DATE FILTER
+                if active_score:
+                    if not sheet_score:
+                        continue
+                    if active_score > sheet_score:
+                        continue
 
                 if cabins_found:
                     row_dict = row.to_dict()
@@ -154,7 +175,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                     for cabin in cabins_found:
                         if cabin in row_dict:
                             val = row_dict.pop(cabin)
-                            row_dict.pop(cabin.upper(), None)  # ✅ FIX duplicate prevention
+                            row_dict.pop(cabin.upper(), None)
                             row_dict[cabin.upper()] = val
 
                     results.append(row_dict)
@@ -180,7 +201,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
             st.markdown(final_reply)
 
             if final_table is not None:
-                # ✅ FINAL FIX BEFORE DISPLAY
                 final_table = final_table.copy()
                 final_table.columns = final_table.columns.astype(str).str.strip()
                 final_table = final_table.loc[:, ~final_table.columns.duplicated()]
