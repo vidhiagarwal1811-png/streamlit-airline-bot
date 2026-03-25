@@ -2,8 +2,26 @@ import streamlit as st
 import pandas as pd
 import calendar
 
+# ✅ ADD THESE IMPORTS (NEW)
+from datetime import datetime
+import os
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Deal Sheet Assistant", layout="wide")
+
+# ✅ ADD LOGGING FUNCTION (NEW)
+def log_visit():
+    data = pd.DataFrame([[datetime.now()]], columns=["timestamp"])
+    if os.path.exists("usage_log.csv"):
+        data.to_csv("usage_log.csv", mode='a', header=False, index=False)
+    else:
+        data.to_csv("usage_log.csv", index=False)
+
+# ✅ CALL LOGGING (NEW - SAFE)
+try:
+    log_visit()
+except:
+    pass
 
 # --- SESSION STATE ---
 if "messages" not in st.session_state:
@@ -96,19 +114,16 @@ if user_input := st.chat_input("Ask deal (example: Airline code and Cabin type (
                     airline_name = str(row["airlines name"]).lower()
                     iata = str(row["iata"]).lower()
 
-                    # Exact IATA match
                     if iata in words:
                         airline_found = airline
                         filtered_df = df[df["iata"].str.lower() == iata]
                         break
 
-                    # Exact airline code match
                     if airline in words:
                         airline_found = airline
                         filtered_df = df[df["airlines"].str.lower() == airline]
                         break
 
-                    # Airline name match
                     if airline_name in query:
                         airline_found = airline
                         filtered_df = df[df["airlines name"].str.lower() == airline_name]
@@ -139,14 +154,12 @@ if user_input := st.chat_input("Ask deal (example: Airline code and Cabin type (
                         iata_code = row["iata"]
                         validity_text = str(row.get("validity", "")).lower()
 
-                        # --- VALIDITY MONTH DETECTION ---
                         validity_month = None
                         for m in month_map:
                             if m in validity_text:
                                 validity_month = month_map[m]
                                 break
 
-                        # --- VALIDITY CHECK ---
                         if query_month and validity_month and query_month > validity_month:
 
                             st.write("❌ No deal available for the given month.")
