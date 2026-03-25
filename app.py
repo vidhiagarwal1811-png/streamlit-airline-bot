@@ -11,7 +11,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGn
 def load_data():
     try:
         df = pd.read_csv(SHEET_URL)
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.astype(str).str.strip()  # ✅ FIX: ensure clean column names
         return df
     except:
         return pd.DataFrame()
@@ -42,7 +42,13 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "table" in msg and msg["table"] is not None:
-            st.dataframe(msg["table"], use_container_width=True)
+
+            # ✅ FIX: CLEAN BEFORE DISPLAY
+            table = msg["table"].copy()
+            table.columns = table.columns.astype(str).str.strip()
+            table = table.loc[:, ~table.columns.duplicated()]
+
+            st.dataframe(table, use_container_width=True)
 
 # --- 5. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant Test")
@@ -73,7 +79,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
             st.session_state.pending_rows = None
             st.session_state.last_airline = current_airline_in_query
     elif current_airline_in_query is not None:
-        # first time setting the airline
         st.session_state.last_airline = current_airline_in_query
 
     # --- DATE MEMORY ---
@@ -116,12 +121,10 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
 
     with st.chat_message("assistant"):
 
-        # --- PENDING CONTEXT ---
         if not matched_rows and st.session_state.pending_rows is not None:
             matched_rows = st.session_state.pending_rows
 
         if matched_rows:
-            # Only store pending rows if cabin not provided yet
             if not cabins_found:
                 st.session_state.pending_rows = matched_rows
             else:
@@ -136,49 +139,52 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 sheet_score = get_date_score(val_text)
                 airline_display_name = str(row.get('Airlines Name', '')).upper()
 
-                # --- DATE FILTER ---
                 if active_score and sheet_score and active_score > sheet_score:
                     continue
 
-                # --- SINGLE ROW MULTI-CABIN OUTPUT ---
                 if cabins_found:
-                    row_dict = row.to_dict()  # keep all columns
+                    row_dict = row.to_dict()
                     row_dict["Exclusions"] = excl_text
-                    # Remove unrequested cabin columns
+
                     cabin_columns = ["First", "Bus", "Prem. eco", "Eco"]
                     for col in cabin_columns:
                         if col not in cabins_found:
                             row_dict.pop(col, None)
-                    # Ensure requested cabins uppercase in table
+
                     for cabin in cabins_found:
                         if cabin in row_dict:
-                            row_dict[cabin.upper()] = row_dict.pop(cabin)
+                            val = row_dict.pop(cabin)
+                            row_dict.pop(cabin.upper(), None)  # ✅ FIX duplicate prevention
+                            row_dict[cabin.upper()] = val
+
                     results.append(row_dict)
 
-            # --- CABIN NOT PROVIDED ---
             if not cabins_found:
                 final_reply = f"I found {len(matched_rows)} deals for **{airline_display_name}**. Which cabin(s): **Economy, Business, or First?**"
                 final_table = pd.DataFrame(matched_rows)
 
-            # --- SUCCESS WITH CABINS ---
             elif results:
                 final_df = pd.DataFrame(results)
 
-                # --- REORDER COLUMNS FOR DISPLAY, EXCLUDE S.No ---
                 base_cols = ["Airlines", "Airlines Name", "IATA"] + [c.upper() for c in cabins_found] + ["Validity", "Exclusions"]
-                remaining_cols = [c for c in final_df.columns if c not in base_cols and c != "S.No"]  # exclude S.No
+                remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
                 final_df = final_df[base_cols + remaining_cols]
 
                 final_reply = f"✅ Found {len(results)} deal entries for **{airline_display_name}**."
                 final_table = final_df
 
-            # --- NO VALID DEALS AFTER DATE FILTER ---
             else:
                 final_reply = f"❌ No valid deals found for **{airline_display_name}**."
                 final_table = None
 
             st.markdown(final_reply)
+
             if final_table is not None:
+                # ✅ FINAL FIX BEFORE DISPLAY
+                final_table = final_table.copy()
+                final_table.columns = final_table.columns.astype(str).str.strip()
+                final_table = final_table.loc[:, ~final_table.columns.duplicated()]
+
                 st.dataframe(final_table, use_container_width=True)
 
             st.session_state.messages.append({
@@ -186,6 +192,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 "content": final_reply,
                 "table": final_table
             })
+
         else:
             resp = "I couldn't find that airline. Please try 'AA' or 'AC'."
             st.write(resp)
