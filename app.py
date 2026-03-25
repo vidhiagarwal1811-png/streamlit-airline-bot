@@ -18,7 +18,7 @@ def load_data():
 
 df = load_data()
 
-# --- 2. DATE SCORER (UPDATED) ---
+# --- 2. DATE SCORER ---
 def get_date_score(text):
     if not text or pd.isna(text):
         return None
@@ -68,12 +68,12 @@ st.title("✈️ Smart Airline Deal Assistant Test")
 
 if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
 
-    # --- USER MESSAGE ---
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
 
     query = user_input.lower().strip()
+    query_words = set(re.findall(r'\b\w+\b', query))  # ✅ FIXED TOKEN MATCHING
     user_score = get_date_score(query)
 
     # --- AIRLINE DETECTION ---
@@ -81,11 +81,16 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
     for _, row in df.iterrows():
         airline_code = str(row.get('Airlines', '')).strip().lower()
         airline_name = str(row.get('Airlines Name', '')).strip().lower()
-        if airline_code in query or airline_name in query:
-            current_airline_in_query = {"Airlines": airline_code, "Airlines Name": airline_name}
+        airline_name_words = set(airline_name.split())
+
+        if airline_code in query_words or airline_name_words.intersection(query_words):
+            current_airline_in_query = {
+                "Airlines": airline_code,
+                "Airlines Name": airline_name
+            }
             break
 
-    # --- RESET CONTEXT ---
+    # --- RESET CONTEXT IF AIRLINE CHANGED ---
     if st.session_state.last_airline is not None and current_airline_in_query is not None:
         if (current_airline_in_query["Airlines"] != st.session_state.last_airline["Airlines"]
             or current_airline_in_query["Airlines Name"] != st.session_state.last_airline["Airlines Name"]):
@@ -101,40 +106,51 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
         st.session_state.last_user_score = user_score
     active_score = st.session_state.last_user_score
 
-    # --- CABIN MEMORY ---
+    # --- CABIN PARSING ---
     cabin_map = {
         "bus": "Bus", "business": "Bus",
         "eco": "Eco", "economy": "Eco",
         "first": "First", "prem": "Prem. eco"
     }
+
+    prev_cabins = st.session_state.last_cabins
     cabins_found = [v for k, v in cabin_map.items() if k in query]
+
     if cabins_found:
         st.session_state.last_cabins = cabins_found
     else:
-        cabins_found = st.session_state.last_cabins
+        cabins_found = prev_cabins
 
     # --- AIRLINE SEARCH ---
     matched_rows = []
     airline_found = False
+
     for _, row in df.iterrows():
         airline_code = str(row.get('Airlines', '')).strip().lower()
         airline_name = str(row.get('Airlines Name', '')).strip().lower()
-        if airline_code in query or airline_name in query:
+        airline_name_words = set(airline_name.split())
+
+        if airline_code in query_words or airline_name_words.intersection(query_words):
             matched_rows.append(row)
             airline_found = True
-            st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": airline_name}
+            st.session_state.last_airline = {
+                "Airlines": airline_code,
+                "Airlines Name": airline_name
+            }
 
-    # --- FALLBACK AIRLINE CONTEXT ---
+    # --- CONTEXT FALLBACK ---
     if not airline_found and st.session_state.last_airline is not None:
         last_code = st.session_state.last_airline["Airlines"]
         last_name = st.session_state.last_airline["Airlines Name"]
+
         for _, row in df.iterrows():
             airline_code = str(row.get('Airlines', '')).strip().lower()
             airline_name = str(row.get('Airlines Name', '')).strip().lower()
+
             if airline_code == last_code or airline_name == last_name:
                 matched_rows.append(row)
 
-    # ================== ✅ ASSISTANT BLOCK (CORRECTLY PLACED) ==================
+    # ================= ASSISTANT =================
     with st.chat_message("assistant"):
 
         if not matched_rows and st.session_state.pending_rows is not None:
@@ -179,7 +195,6 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
                             row_dict.pop(cabin.upper(), None)
                             row_dict[cabin.upper()] = val
 
-                # --- STORE ---
                 if is_valid:
                     results.append(row_dict)
                 else:
@@ -189,6 +204,19 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
             # --- FINAL OUTPUT ---
             if results:
                 final_df = pd.DataFrame(results)
+
+                # ✅ COLUMN ORDER FIX
+                base_cols = ["Airlines", "Airlines Name", "IATA"]
+                cabin_cols = [c.upper() for c in cabins_found] if cabins_found else []
+                tail_cols = ["Validity", "Exclusions"]
+
+                remaining_cols = [
+                    c for c in final_df.columns
+                    if c not in set(base_cols + cabin_cols + tail_cols) and c != "S.No"
+                ]
+
+                final_df = final_df[base_cols + cabin_cols + tail_cols + remaining_cols]
+
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
@@ -198,6 +226,7 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
                 closest_rows = [r for s, r in fallback_results if s == closest_score]
 
                 final_df = pd.DataFrame(closest_rows)
+
                 final_reply = (
                     "❌ No deals available for given date.\n\n"
                     "👉 Closest available deal(s) are shown below."
