@@ -73,7 +73,7 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
         st.write(user_input)
 
     query = user_input.lower().strip()
-    query_words = set(re.findall(r'\b\w+\b', query))  # ✅ FIXED TOKEN MATCHING
+    query_words = set(re.findall(r'\b\w+\b', query))
     user_score = get_date_score(query)
 
     # --- AIRLINE DETECTION ---
@@ -205,9 +205,15 @@ if user_input := st.chat_input("Ex: 'AI Eco Dec 2026'"):
             if results:
                 final_df = pd.DataFrame(results)
 
-                # ✅ COLUMN ORDER FIX
+                # ✅ ONLY CHANGE: HANDLE NO CABIN CASE
                 base_cols = ["Airlines", "Airlines Name", "IATA"]
-                cabin_cols = [c.upper() for c in cabins_found] if cabins_found else []
+                all_cabin_cols = ["FIRST", "BUS", "PREM. ECO", "ECO"]
+
+                if cabins_found:
+                    cabin_cols = [c.upper() for c in cabins_found]
+                else:
+                    cabin_cols = [c for c in all_cabin_cols if c in final_df.columns]
+
                 tail_cols = ["Validity", "Exclusions"]
 
                 remaining_cols = [
