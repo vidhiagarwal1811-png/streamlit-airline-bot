@@ -6,18 +6,29 @@ from groq import Groq  # Groq SDK
 # --- 1. SETUP & DATA ---
 st.set_page_config(page_title="Smart Airline Deal Assistant", layout="wide", page_icon="✈️")
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
+DEAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/edit?gid=0#gid=0"
+ROUTE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h-GAtHsQA8hEnEccX1qzqQlbvu9CHauFSYTS5mgNLc0/edit?gid=0#gid=0"
 
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        df = pd.read_csv(SHEET_URL)
+        df = pd.read_csv(DEAL_SHEET_URL)
         df.columns = df.columns.astype(str).str.strip()
         return df
     except:
         return pd.DataFrame()
 
+@st.cache_data(ttl=60)
+def load_routes():
+    try:
+        routes_df = pd.read_csv(ROUTE_SHEET_URL)
+        routes_df.columns = routes_df.columns.astype(str).str.strip()
+        return routes_df
+    except:
+        return pd.DataFrame()
+
 df = load_data()
+routes_df = load_routes()
 
 # --- 2. DATE SCORER ---
 def get_date_score(text):
@@ -54,14 +65,14 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def ask_groq(prompt):
     try:
-        response = client.predict(prompt)
+        response = client.predict(prompt)  # Latest Groq SDK
         return response.text
     except Exception as e:
         return f"Error calling Groq API: {e}"
 
-# --- 6. PARSE ORIGIN/DESTINATION ---
-def parse_origin_destination(text):
-    match = re.search(r'from\s+(\w+)\s+to\s+(\w+)', text.lower())
+# --- 6. HELPER: Extract origin/destination ---
+def extract_origin_destination(text):
+    match = re.search(r'from (\w+) to (\w+)', text.lower())
     if match:
         return match.group(1), match.group(2)
     return None, None
@@ -69,120 +80,116 @@ def parse_origin_destination(text):
 # --- 7. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant")
 
-if user_input := st.chat_input("Ex: 'AA Eco Dec 2026' or 'I want to fly from Kolkata to London'"):
+if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
 
     st.session_state.messages.append({"role": "user", "content": user_input})
+
     with st.chat_message("user"):
         st.write(user_input)
 
     query = user_input.lower().strip()
     user_score = get_date_score(query)
 
-    # --- DATE MEMORY ---
     if user_score:
         st.session_state.last_user_score = user_score
     active_score = st.session_state.last_user_score or None
 
     # --- CABIN ---
-    cabin_map = {
-        "bus": "Bus", "business": "Bus",
-        "eco": "Eco", "economy": "Eco",
-        "first": "First", "prem": "Prem. eco"
-    }
+    cabin_map = {"bus": "Bus", "business": "Bus", "eco": "Eco", "economy": "Eco", "first": "First", "prem": "Prem. eco"}
     cabins_found = [v for k, v in cabin_map.items() if k in query]
     if cabins_found:
         st.session_state.last_cabins = cabins_found
     else:
         cabins_found = st.session_state.last_cabins
 
-    # --- AIRLINE SEARCH ---
+    # --- DIRECT FLIGHT FILTER ---
+    origin, destination = extract_origin_destination(user_input)
+    direct_flights = pd.DataFrame()
+    if origin and destination:
+        direct_flights = routes_df[
+            (routes_df['origin_city'].str.lower() == origin) &
+            (routes_df['destination_city'].str.lower() == destination)
+        ]
+    
     matched_rows = []
     airline_found = False
 
-    for _, row in df.iterrows():
-        airline_code = str(row.get('Airlines', '')).strip().lower()
-        airline_name = str(row.get('Airlines Name', '')).strip().lower()
-        if airline_code in query or airline_name in query:
-            matched_rows.append(row)
-            airline_found = True
-            st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": airline_name}
-
-    # --- FALLBACK AIRLINE MEMORY ---
-    if not airline_found and st.session_state.last_airline is not None:
-        last_code = st.session_state.last_airline["Airlines"]
-        last_name = st.session_state.last_airline["Airlines Name"]
+    if not direct_flights.empty:
+        direct_airline_codes = direct_flights['direct_airlines'].str.lower().str.split(',').explode().str.strip().tolist()
         for _, row in df.iterrows():
             airline_code = str(row.get('Airlines', '')).strip().lower()
             airline_name = str(row.get('Airlines Name', '')).strip().lower()
-            if airline_code == last_code or airline_name == last_name:
+            if airline_code in direct_airline_codes or airline_name in direct_airline_codes:
                 matched_rows.append(row)
+                airline_found = True
+                st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": airline_name}
 
-    # --- ASSISTANT BLOCK ---
-    with st.chat_message("assistant"):
+    # --- FALLBACK IF NO DIRECT FLIGHT DEAL ---
+    if not matched_rows:
+        final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title()} to {destination.title()} in the deal sheet."
+        st.markdown(final_reply)
+        st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": None})
+    else:
+        # --- PROCESS DEALS ---
+        results = []
+        fallback_results = []
+        airline_display_name = ""
+        for row in matched_rows:
+            val_text = str(row.get('Validity', ''))
+            excl_text = str(row.get('Exclusions', 'None listed'))
+            sheet_score = get_date_score(val_text)
+            airline_display_name = str(row.get('Airlines Name', '')).upper()
+            row_dict = row.to_dict()
+            row_dict["Exclusions"] = excl_text
 
-        if not matched_rows:
-            resp = "❌ No deals found in the deal sheet."
-            st.write(resp)
-            st.session_state.messages.append({"role": "assistant", "content": resp, "table": None})
-        else:
-            results = []
-            airline_display_name = ""
-            for row in matched_rows:
-                val_text = str(row.get('Validity', ''))
-                excl_text = str(row.get('Exclusions', 'None listed'))
-                sheet_score = get_date_score(val_text)
-                airline_display_name = str(row.get('Airlines Name', '')).upper()
-                row_dict = row.copy()
-                row_dict["Exclusions"] = excl_text
+            is_valid = True
+            if active_score:
+                if not sheet_score or sheet_score < active_score:
+                    is_valid = False
 
-                # --- DATE FILTER ---
-                is_valid = True
-                if active_score:
-                    if not sheet_score or sheet_score < active_score:
-                        is_valid = False
+            if cabins_found:
+                cabin_columns = ["First", "Bus", "Prem. eco", "Eco"]
+                for col in cabin_columns:
+                    if col not in cabins_found:
+                        row_dict.pop(col, None)
+                for cabin in cabins_found:
+                    if cabin in row_dict:
+                        val = row_dict.pop(cabin)
+                        row_dict.pop(cabin.upper(), None)
+                        row_dict[cabin.upper()] = val
 
-                # --- CABIN FILTER ---
-                if cabins_found:
-                    cabin_columns = ["First", "Bus", "Prem. eco", "Eco"]
-                    for col in cabin_columns:
-                        if col not in cabins_found:
-                            row_dict.pop(col, None)
-                    for cabin in cabins_found:
-                        if cabin in row_dict:
-                            val = row_dict.pop(cabin)
-                            row_dict[cabin.upper()] = val
+            if is_valid:
+                results.append(row_dict)
+            else:
+                if sheet_score:
+                    fallback_results.append((sheet_score, row_dict))
 
-                if is_valid:
-                    results.append(row_dict)
-
+        if results:
             final_df = pd.DataFrame(results)
-            final_df = final_df.loc[:, ~final_df.columns.duplicated()]
+            base_cols = ["Airlines", "Airlines Name", "IATA"] + ([c.upper() for c in cabins_found] if cabins_found else []) + ["Validity", "Exclusions"]
+            remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
+            final_df = final_df.reindex(columns=base_cols + remaining_cols)
+
             final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
+            final_table = final_df
 
             # --- AI SUMMARY ---
-            origin, dest = parse_origin_destination(user_input)
-            route_text = f" from {origin.upper()} to {dest.upper()}" if origin and dest else ""
             rows_text = final_df.to_string(index=False)
             prompt = f"""
-Customer asked: '{user_input}'{route_text}
-
-Here are the deals from the sheet. Keep all formatting exactly as in the sheet.
-Do NOT change O/B, I/B, B+YQ, or any deal codes.
-Do NOT use the word 'discount'. Only refer to deals.
-Keep spacing and formatting neat.
+Customer asked: '{user_input}'
+Here are the deals from the sheet (keep all O/B and I/B as-is, do not replace or explain):
 {rows_text}
+
+Please summarize the deals in simple language, highlight important notes/exclusions, use the word 'deal' only, and be concise.
 """
             ai_summary = ask_groq(prompt)
 
-            # --- DISPLAY ---
             st.markdown(final_reply)
-            st.markdown(f"**AI Summary:**\n{ai_summary}")
+            st.markdown(f"**AI Summary:** {ai_summary}")
+            if final_table is not None and not final_table.empty:
+                final_table = final_table.copy()
+                final_table.columns = final_table.columns.astype(str).str.strip()
+                final_table = final_table.loc[:, ~final_table.columns.duplicated()]
+                st.dataframe(final_table, use_container_width=True)
 
-            if not final_df.empty:
-                st.dataframe(final_df, use_container_width=True)
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": final_reply,
-                "table": final_df
-            })
+            st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": final_table})
