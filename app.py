@@ -68,7 +68,7 @@ def ask_groq(prompt: str) -> str:
 # --- 6. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant")
 
-if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
+if user_input := st.chat_input("Ex: 'AA Eco Dec 2026' or calculate margin"):
 
     st.session_state.messages.append({"role": "user", "content": user_input})
 
@@ -97,6 +97,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
     matched_rows = []
     airline_found = False
 
+    # --- filter rows strictly matching airline codes ---
     for _, row in df.iterrows():
         airline_code = str(row.get('Airlines', '')).strip().lower()
         airline_name = str(row.get('Airlines Name', '')).strip().lower()
@@ -166,36 +167,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
-                # --- FINAL AI SUMMARY (literal table) ---
-                rows_text = final_df.to_csv(index=False)
-                prompt = (
-                    f"Customer asked: '{user_input}'\n\n"
-                    "You are a travel assistant. Summarize the airline **deals** from the table below.\n\n"
-                    "IMPORTANT:\n"
-                    "- Do not interpret or change any fare/cabin codes (e.g., B, BI, YQ, ECO). Keep them exactly as in the sheet.\n"
-                    "- Treat the table as literal text. Do not infer class or meaning.\n"
-                    "- Always call them 'deals', never 'discounts'.\n"
-                    "- Highlight validity and any exclusions clearly.\n"
-                    "- Use simple, concise, customer-friendly language.\n"
-                    "- Preserve formatting exactly as in the CSV.\n\n"
-                    "Deals table (literal CSV):\n"
-                    "'''\n"
-                    + rows_text +
-                    "'''\n"
-                )
-                ai_summary = ask_groq(prompt)
-
-            elif fallback_results:
-                fallback_results.sort(key=lambda x: abs(x[0] - active_score) if active_score else x[0])
-                closest_score = fallback_results[0][0]
-                closest_rows = [r for s, r in fallback_results if s == closest_score]
-                final_df = pd.DataFrame(closest_rows)
-                final_reply = (
-                    f"❌ No deals available for given date.\n\n"
-                    f"👉 Closest available deal(s) are shown below."
-                )
-                final_table = final_df if not final_df.empty else None
-
+                # --- FINAL AI SUMMARY (literal table only) ---
                 rows_text = final_df.to_csv(index=False)
                 prompt = (
                     f"Customer asked: '{user_input}'\n\n"
@@ -241,3 +213,12 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 "content": resp,
                 "table": None
             })
+
+# --- 7. EXAMPLE PYTHON MARGIN CALCULATION ---
+if "calculate margin" in user_input.lower():
+    st.info("⚠️ Use Python to calculate margins. AI will not calculate them accurately.")
+    base_fare = st.number_input("Base Fare", min_value=0, value=2500)
+    yq = st.number_input("YQ/Taxes", min_value=0, value=5000)
+    selling_price = st.number_input("Selling Price", min_value=0, value=10000)
+    margin = selling_price - (base_fare + yq)
+    st.success(f"Margin for First Class: {margin}")
