@@ -23,6 +23,13 @@ def load_routes():
     try:
         routes_df = pd.read_csv(ROUTE_SHEET_URL)
         routes_df.columns = routes_df.columns.astype(str).str.strip()
+        # clean strings
+        for col in ['origin_city', 'destination_city', 'direct_airlines']:
+            if col in routes_df.columns:
+                routes_df[col] = routes_df[col].astype(str).str.lower().str.strip()
+        # create list of airlines
+        routes_df['direct_airlines_list'] = routes_df['direct_airlines'].str.split(',')
+        routes_df['direct_airlines_list'] = routes_df['direct_airlines_list'].apply(lambda x: [i.strip() for i in x])
         return routes_df
     except:
         return pd.DataFrame()
@@ -72,9 +79,9 @@ def ask_groq(prompt):
 
 # --- 6. HELPER: Extract origin/destination ---
 def extract_origin_destination(text):
-    match = re.search(r'from ([\w\s]+) to ([\w\s]+)', text.lower())
+    match = re.search(r'from (\w+) to (\w+)', text.lower())
     if match:
-        return match.group(1).strip(), match.group(2).strip()
+        return match.group(1), match.group(2)
     return None, None
 
 # --- 7. CHAT LOGIC ---
@@ -89,7 +96,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
 
     query = user_input.lower().strip()
     user_score = get_date_score(query)
-
     if user_score:
         st.session_state.last_user_score = user_score
     active_score = st.session_state.last_user_score or None
@@ -105,46 +111,33 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
     # --- DIRECT FLIGHT FILTER ---
     origin, destination = extract_origin_destination(user_input)
     direct_flights = pd.DataFrame()
-    if origin and destination:
-        if 'origin_city' in routes_df.columns and 'destination_city' in routes_df.columns:
-            direct_flights = routes_df[
-                (routes_df['origin_city'].str.lower() == origin.lower()) &
-                (routes_df['destination_city'].str.lower() == destination.lower())
-            ]
+    if origin and destination and not routes_df.empty:
+        direct_flights = routes_df[
+            (routes_df['origin_city'] == origin) &
+            (routes_df['destination_city'] == destination)
+        ]
 
     matched_rows = []
     airline_found = False
 
     if not direct_flights.empty:
-        direct_airline_codes = []
-        if 'direct_airlines' in direct_flights.columns:
-            direct_airline_codes = (
-                direct_flights['direct_airlines']
-                .dropna()
-                .str.lower()
-                .str.split(',')
-                .explode()
-                .str.strip()
-                .tolist()
-            )
+        direct_airline_codes = direct_flights['direct_airlines_list'].explode().tolist()
         for _, row in df.iterrows():
             airline_code = str(row.get('Airlines', '')).strip().lower()
-            airline_name = str(row.get('Airlines Name', '')).strip().lower()
-            if airline_code in direct_airline_codes or airline_name in direct_airline_codes:
+            if airline_code in direct_airline_codes:
                 matched_rows.append(row)
                 airline_found = True
-                st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": airline_name}
+                st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": row.get('Airlines Name', '')}
 
     # --- FALLBACK IF NO DIRECT FLIGHT DEAL ---
     if not matched_rows:
-        final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title()} to {destination.title()} in the deal sheet."
+        final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title() if origin else 'Origin'} to {destination.title() if destination else 'Destination'} in the deal sheet."
         st.markdown(final_reply)
         st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": None})
 
     else:
         # --- PROCESS DEALS ---
         results = []
-        fallback_results = []
         airline_display_name = ""
         for row in matched_rows:
             val_text = str(row.get('Validity', ''))
@@ -164,17 +157,9 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
                 for col in cabin_columns:
                     if col not in cabins_found:
                         row_dict.pop(col, None)
-                for cabin in cabins_found:
-                    if cabin in row_dict:
-                        val = row_dict.pop(cabin)
-                        row_dict.pop(cabin.upper(), None)
-                        row_dict[cabin.upper()] = val
 
             if is_valid:
                 results.append(row_dict)
-            else:
-                if sheet_score:
-                    fallback_results.append((sheet_score, row_dict))
 
         if results:
             final_df = pd.DataFrame(results)
