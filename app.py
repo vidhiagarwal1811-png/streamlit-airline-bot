@@ -230,6 +230,7 @@ Customer asked: '{user_input}'
 You are a travel assistant. Summarize the airline **deals** from the list below. 
 
 - Use exactly the fare/cabin info as it appears in the sheet (do not interpret codes like 'B' or 'YQ').  
+- Clearly mention which cabins or fares are available for each deal.  
 - Highlight validity and any exclusions.  
 - Write in simple, customer-friendly language.  
 - Be concise, clear, and easy to read.  
