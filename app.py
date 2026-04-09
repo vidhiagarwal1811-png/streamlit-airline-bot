@@ -5,7 +5,6 @@ from groq import Groq  # Groq SDK
 
 # --- 1. SETUP & DATA ---
 st.set_page_config(page_title="Smart Airline Deal Assistant", layout="wide", page_icon="✈️")
-
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
 @st.cache_data(ttl=60)
@@ -75,13 +74,16 @@ def ask_groq(prompt: str) -> str:
 
 # --- 7. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant")
-user_input = st.chat_input("Ex: 'AA Eco Dec 2026' or 'I want to fly from Delhi to London'")
+user_input = st.chat_input("Ex: 'AA Eco Dec 2026' or 'I want to fly from Delhi to London direct'")
 
 if user_input:
 
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
+
+    # --- Direct flight detection ---
+    direct_only = "direct" in user_input.lower()
 
     # --- Margin calculation ---
     if "calculate margin" in user_input.lower():
@@ -130,19 +132,17 @@ if user_input:
                 if airline_code == last_code or airline_name == last_name:
                     matched_rows.append(row)
 
-        # --- AI Smart Route Filtering ---
+        # --- AI Smart Route Filtering (direct flights if requested) ---
         if origin and dest and matched_rows:
-            # Ask Groq to filter airlines that actually fly this route
             airline_list = ','.join([str(r['Airlines Name']) for r in matched_rows])
             route_prompt = f"""
             Customer wants to fly from {origin} to {dest}.
+            {'They only want direct flights.' if direct_only else ''}
             Here are the airlines from the deals sheet: {airline_list}.
-            Identify which airlines actually operate flights from {origin} to {dest}.
-            Return only airline names as a comma separated list.
+            Return only airlines that operate flights on this route as comma-separated names.
             """
             filtered_airlines_text = ask_groq(route_prompt)
             filtered_airlines = [a.strip().lower() for a in re.split(r',|\n', filtered_airlines_text) if a.strip()]
-            # Filter matched_rows
             matched_rows = [r for r in matched_rows if str(r['Airlines Name']).strip().lower() in filtered_airlines]
 
         # --- ASSISTANT RESPONSE ---
