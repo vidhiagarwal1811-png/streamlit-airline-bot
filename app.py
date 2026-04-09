@@ -68,7 +68,7 @@ def ask_groq(prompt: str) -> str:
 # --- 6. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant")
 
-user_input = st.chat_input("Ex: 'AA Eco Dec 2026' or calculate margin")
+user_input = st.chat_input("Ex: 'AA Eco Dec 2026' or 'calculate margin'")
 if user_input:
 
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -168,7 +168,7 @@ if user_input:
                 if results:
                     final_df = pd.DataFrame(results)
 
-                    # --- Keep everything literal (O/B, I/B, B+YQ, BI, etc.) ---
+                    # --- Keep everything literal ---
                     base_cols = ["Airlines", "Airlines Name", "IATA"] + \
                                 ([c for c in cabins_found] if cabins_found else []) + \
                                 ["Validity", "Exclusions"]
@@ -182,9 +182,8 @@ if user_input:
                     prompt = (
                         f"Customer asked: '{user_input}'\n\n"
                         "Summarize the airline **deals** from the table below.\n"
-                        "Do NOT change any codes (O/B, I/B, B+YQ, BI, ECO, etc.).\n"
-                        "Use the word 'deals', not 'discounts'.\n"
-                        "Highlight validity and exclusions. Keep it concise and readable.\n"
+                        "Do NOT change any codes. Keep O/B and I/B as-is.\n"
+                        "Keep everything exactly as in the table. Only describe in simple language.\n"
                         "Table (CSV literal):\n'''\n"
                         + rows_text + "'''\n"
                     )
