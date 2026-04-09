@@ -65,10 +65,17 @@ for msg in st.session_state.messages:
 # --- 5. INITIALIZE GROQ CLIENT ---
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
+# ✅ FIXED FUNCTION (ONLY CHANGE)
 def ask_groq(prompt):
     try:
-        response = client.predict(prompt)
-        return response.text
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Error calling Groq API: {e}"
 
@@ -110,7 +117,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
     if origin and destination and not routes_df.empty:
         origin = origin.lower()
         destination = destination.lower()
-        # Filter direct flights
         direct_flights = routes_df[
             (routes_df['origin_city'].str.lower() == origin) &
             (routes_df['destination_city'].str.lower() == destination)
@@ -180,6 +186,7 @@ Please summarize the deals in simple language, highlight important notes/exclusi
 
         st.markdown(final_reply)
         st.markdown(f"**AI Summary:** {ai_summary}")
+
         if final_table is not None and not final_table.empty:
             final_table = final_table.copy()
             final_table.columns = final_table.columns.astype(str).str.strip()
