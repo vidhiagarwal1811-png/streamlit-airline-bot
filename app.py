@@ -56,7 +56,7 @@ def ask_groq(prompt: str) -> str:
     try:
         response = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": "You are a helpful travel assistant."},
                 {"role": "user", "content": prompt}
             ],
             model="openai/gpt-oss-20b"
@@ -146,7 +146,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                         is_valid = False
 
                 if cabins_found:
-                    # --- SAFE CABIN HANDLING ---
                     for col in ["First","Bus","Prem. eco","Eco"]:
                         if col not in cabins_found and col in row_dict:
                             row_dict.pop(col, None)
@@ -167,21 +166,22 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
-                # --- FIXED AI SUMMARY BLOCK ---
+                # --- FINAL AI SUMMARY (literal table) ---
                 rows_text = final_df.to_csv(index=False)
                 prompt = (
                     f"Customer asked: '{user_input}'\n\n"
                     "You are a travel assistant. Summarize the airline **deals** from the table below.\n\n"
                     "IMPORTANT:\n"
-                    "- Do not interpret or change any fare/cabin codes (e.g., B, YQ, ECO). Keep them exactly as in the sheet.\n"
-                    "- Always refer to them as 'deals', never 'discounts'.\n"
-                    "- Clearly highlight validity and any exclusions.\n"
+                    "- Do not interpret or change any fare/cabin codes (e.g., B, BI, YQ, ECO). Keep them exactly as in the sheet.\n"
+                    "- Treat the table as literal text. Do not infer class or meaning.\n"
+                    "- Always call them 'deals', never 'discounts'.\n"
+                    "- Highlight validity and any exclusions clearly.\n"
                     "- Use simple, concise, customer-friendly language.\n"
-                    "- Keep the formatting and codes exactly as they appear.\n\n"
-                    "Deals table (raw CSV):\n\n"
-                    "```\n"
+                    "- Preserve formatting exactly as in the CSV.\n\n"
+                    "Deals table (literal CSV):\n"
+                    "'''\n"
                     + rows_text +
-                    "```\n"
+                    "'''\n"
                 )
                 ai_summary = ask_groq(prompt)
 
@@ -201,15 +201,16 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                     f"Customer asked: '{user_input}'\n\n"
                     "You are a travel assistant. Summarize the airline **deals** from the table below.\n\n"
                     "IMPORTANT:\n"
-                    "- Do not interpret or change any fare/cabin codes (e.g., B, YQ, ECO). Keep them exactly as in the sheet.\n"
-                    "- Always refer to them as 'deals', never 'discounts'.\n"
-                    "- Clearly highlight validity and any exclusions.\n"
+                    "- Do not interpret or change any fare/cabin codes (e.g., B, BI, YQ, ECO). Keep them exactly as in the sheet.\n"
+                    "- Treat the table as literal text. Do not infer class or meaning.\n"
+                    "- Always call them 'deals', never 'discounts'.\n"
+                    "- Highlight validity and any exclusions clearly.\n"
                     "- Use simple, concise, customer-friendly language.\n"
-                    "- Keep the formatting and codes exactly as they appear.\n\n"
-                    "Deals table (raw CSV):\n\n"
-                    "```\n"
+                    "- Preserve formatting exactly as in the CSV.\n\n"
+                    "Deals table (literal CSV):\n"
+                    "'''\n"
                     + rows_text +
-                    "```\n"
+                    "'''\n"
                 )
                 ai_summary = ask_groq(prompt)
 
