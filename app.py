@@ -54,7 +54,7 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def ask_groq(prompt):
     try:
-        response = client.predict(prompt)  # Use latest Groq SDK
+        response = client.predict(prompt)
         return response.text
     except Exception as e:
         return f"Error calling Groq API: {e}"
@@ -66,26 +66,7 @@ def parse_origin_destination(text):
         return match.group(1), match.group(2)
     return None, None
 
-# --- 7. GET DIRECT FLIGHT AIRLINES ---
-def get_direct_flight_airlines(user_input, airlines_list):
-    origin, dest = parse_origin_destination(user_input)
-    if not origin or not dest:
-        return []
-    prompt = f"""
-User wants a direct flight from {origin.upper()} to {dest.upper()}.
-Here is a list of airlines from the deal sheet:
-{', '.join([a['Airlines Name'] for a in airlines_list])}
-
-Return ONLY airlines that you are certain operate a DIRECT (non-stop) flight
-between {origin.upper()} and {dest.upper()}. Do NOT guess. If unsure, return empty.
-
-Output: a comma-separated list of airline names.
-"""
-    response = ask_groq(prompt)
-    airlines = [a.strip().lower() for a in response.split(',') if a.strip()]
-    return airlines
-
-# --- 8. CHAT LOGIC ---
+# --- 7. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant")
 
 if user_input := st.chat_input("Ex: 'AA Eco Dec 2026' or 'I want to fly from Kolkata to London'"):
@@ -114,23 +95,33 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026' or 'I want to fly from Kol
     else:
         cabins_found = st.session_state.last_cabins
 
-    # --- AIRLINE SEARCH & DIRECT FILTER ---
-    airlines_list = df.to_dict(orient="records")
-    direct_airlines = get_direct_flight_airlines(user_input, airlines_list)
+    # --- AIRLINE SEARCH ---
+    matched_rows = []
+    airline_found = False
 
-    if direct_airlines:
-        matched_rows = [
-            row for row in airlines_list
-            if row.get('Airlines Name', '').strip().lower() in direct_airlines
-        ]
-    else:
-        matched_rows = []
+    for _, row in df.iterrows():
+        airline_code = str(row.get('Airlines', '')).strip().lower()
+        airline_name = str(row.get('Airlines Name', '')).strip().lower()
+        if airline_code in query or airline_name in query:
+            matched_rows.append(row)
+            airline_found = True
+            st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": airline_name}
+
+    # --- FALLBACK AIRLINE MEMORY ---
+    if not airline_found and st.session_state.last_airline is not None:
+        last_code = st.session_state.last_airline["Airlines"]
+        last_name = st.session_state.last_airline["Airlines Name"]
+        for _, row in df.iterrows():
+            airline_code = str(row.get('Airlines', '')).strip().lower()
+            airline_name = str(row.get('Airlines Name', '')).strip().lower()
+            if airline_code == last_code or airline_name == last_name:
+                matched_rows.append(row)
 
     # --- ASSISTANT BLOCK ---
     with st.chat_message("assistant"):
 
         if not matched_rows:
-            resp = "❌ No direct flight deals available in the deal sheet."
+            resp = "❌ No deals found in the deal sheet."
             st.write(resp)
             st.session_state.messages.append({"role": "assistant", "content": resp, "table": None})
         else:
@@ -166,18 +157,19 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026' or 'I want to fly from Kol
 
             final_df = pd.DataFrame(results)
             final_df = final_df.loc[:, ~final_df.columns.duplicated()]
-            final_reply = f"✅ Found {len(results)} valid direct-flight deal(s) for **{airline_display_name}**."
+            final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
 
-            # --- GENERATE AI SUMMARY ---
+            # --- AI SUMMARY ---
+            origin, dest = parse_origin_destination(user_input)
+            route_text = f" from {origin.upper()} to {dest.upper()}" if origin and dest else ""
             rows_text = final_df.to_string(index=False)
             prompt = f"""
-Customer asked: '{user_input}'
+Customer asked: '{user_input}'{route_text}
 
-Here are the deals from the sheet. Keep the deal format as-is.
+Here are the deals from the sheet. Keep all formatting exactly as in the sheet.
 Do NOT change O/B, I/B, B+YQ, or any deal codes.
 Do NOT use the word 'discount'. Only refer to deals.
 Keep spacing and formatting neat.
-
 {rows_text}
 """
             ai_summary = ask_groq(prompt)
