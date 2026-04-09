@@ -53,16 +53,13 @@ for msg in st.session_state.messages:
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def ask_groq(prompt: str) -> str:
-    """
-    Sends a prompt to Groq's chat completion API and returns the AI-generated response.
-    """
     try:
         response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ],
-            model="openai/gpt-oss-20b"  # choose an available model
+            model="openai/gpt-oss-20b"
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -92,7 +89,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
     }
 
     cabins_found = [v for k, v in cabin_map.items() if k in query]
-
     if cabins_found:
         st.session_state.last_cabins = cabins_found
     else:
@@ -104,7 +100,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
     for _, row in df.iterrows():
         airline_code = str(row.get('Airlines', '')).strip().lower()
         airline_name = str(row.get('Airlines Name', '')).strip().lower()
-
         if airline_code in query or airline_name in query:
             matched_rows.append(row)
             airline_found = True
@@ -151,9 +146,9 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                         is_valid = False
 
                 if cabins_found:
-                    cabin_columns = ["First", "Bus", "Prem. eco", "Eco"]
-                    for col in cabin_columns:
-                        if col not in cabins_found:
+                    # --- SAFE CABIN HANDLING ---
+                    for col in ["First","Bus","Prem. eco","Eco"]:
+                        if col not in cabins_found and col in row_dict:
                             row_dict.pop(col, None)
 
                 if is_valid:
@@ -169,102 +164,21 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                             ["Validity", "Exclusions"]
                 remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
                 final_df = final_df.reindex(columns=base_cols + remaining_cols)
-
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
-                # --- Convert to bullet-point list preserving all codes ---
-                rows_list = []
-                for _, row in final_df.iterrows():
-                    cabins = [c for c in ["First","Bus","Prem. eco","Eco"] if c in row and pd.notna(row[c])]
-                    cabin_info = ", ".join([f"{c}: {row[c]}" for c in cabins])
-                    deal_text = f"- Airline: {row['Airlines Name'].upper()}, {cabin_info}, Validity: {row.get('Validity','N/A')}, Notes: {row.get('Exclusions','None')}"
-                    rows_list.append(deal_text)
-                rows_text = "\n".join(rows_list)
-
-                # --- AI Summary Prompt ---
+                # --- AI SUMMARY (RAW CSV, PRESERVE DEAL FORMAT) ---
+                rows_text = final_df.to_csv(index=False)
                 prompt = f"""
 Customer asked: '{user_input}'
 
-You are a travel assistant. Summarize the airline **deals** from the list below. 
+You are a travel assistant. Summarize the airline **deals** from the table below. 
 
-- Use exactly the fare/cabin info as it appears in the sheet (do not interpret codes like 'B' or 'YQ').  
-- Clearly mention which cabins or fares are available for each deal.  
-- Highlight validity and any exclusions.  
-- Write in simple, customer-friendly language.  
-- Be concise, clear, and easy to read.  
+IMPORTANT:
+- Do not interpret or change any fare/cabin codes (e.g., B, YQ, ECO). Keep them exactly as in the sheet.
+- Always refer to them as "deals", never "discounts".
+- Clearly highlight validity and any exclusions.
+- Use simple, concise, customer-friendly language.
+- Keep the formatting and codes exactly as they appear.
 
-Deals list:
-
-{rows_text}
-"""
-                ai_summary = ask_groq(prompt)
-
-            elif fallback_results:
-                if active_score:
-                    fallback_results.sort(key=lambda x: abs(x[0] - active_score))
-                else:
-                    fallback_results.sort(key=lambda x: x[0])
-
-                closest_score = fallback_results[0][0]
-                closest_rows = [r for s, r in fallback_results if s == closest_score]
-
-                final_df = pd.DataFrame(closest_rows)
-                final_reply = (
-                    f"❌ No deals available for given date.\n\n"
-                    f"👉 Closest available deal(s) are shown below."
-                )
-                final_table = final_df if not final_df.empty else None
-
-                rows_list = []
-                for _, row in final_df.iterrows():
-                    cabins = [c for c in ["First","Bus","Prem. eco","Eco"] if c in row and pd.notna(row[c])]
-                    cabin_info = ", ".join([f"{c}: {row[c]}" for c in cabins])
-                    deal_text = f"- Airline: {row['Airlines Name'].upper()}, {cabin_info}, Validity: {row.get('Validity','N/A')}, Notes: {row.get('Exclusions','None')}"
-                    rows_list.append(deal_text)
-                rows_text = "\n".join(rows_list)
-
-                prompt = f"""
-Customer asked: '{user_input}'
-
-You are a travel assistant. Summarize the airline **deals** from the list below. 
-
-- Use exactly the fare/cabin info as it appears in the sheet (do not interpret codes like 'B' or 'YQ').  
-- Clearly mention which cabins or fares are available for each deal.  
-- Highlight validity and any exclusions.  
-- Write in simple, customer-friendly language.  
-- Be concise, clear, and easy to read.  
-
-Deals list:
-
-{rows_text}
-"""
-                ai_summary = ask_groq(prompt)
-
-            else:
-                final_reply = f"❌ No deals found for **{airline_display_name}**."
-                final_table = None
-                ai_summary = "No deals to summarize."
-
-            st.markdown(final_reply)
-            st.markdown(f"**AI Summary:** {ai_summary}")
-
-            if final_table is not None and not final_table.empty:
-                final_table.columns = final_table.columns.astype(str).str.strip()
-                final_table = final_table.loc[:, ~final_table.columns.duplicated()]
-                st.dataframe(final_table, use_container_width=True)
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": final_reply,
-                "table": final_table
-            })
-
-        else:
-            resp = "I couldn't find that airline. Please try 'AI', 'AA', etc."
-            st.write(resp)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": resp,
-                "table": None
-            })
+Deals table (raw CSV):
