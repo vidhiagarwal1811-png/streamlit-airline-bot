@@ -52,14 +52,19 @@ for msg in st.session_state.messages:
 # --- 5. INITIALIZE GROQ CLIENT ---
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-def ask_groq(prompt):
+def ask_groq(prompt: str) -> str:
     """
-    Sends a prompt to Groq AI and returns the AI-generated response.
+    Sends a prompt to Groq's chat completion API and returns the AI-generated response.
     """
     try:
-        # FIX: use .predict() instead of .query()
-        response = client.predict(prompt)
-        return response.text  # contains AI output
+        response = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            model="openai/gpt-oss-20b"  # choose an available model
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"Error calling Groq API: {e}"
 
@@ -87,6 +92,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
     }
 
     cabins_found = [v for k, v in cabin_map.items() if k in query]
+
     if cabins_found:
         st.session_state.last_cabins = cabins_found
     else:
@@ -98,6 +104,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
     for _, row in df.iterrows():
         airline_code = str(row.get('Airlines', '')).strip().lower()
         airline_name = str(row.get('Airlines Name', '')).strip().lower()
+
         if airline_code in query or airline_name in query:
             matched_rows.append(row)
             airline_found = True
@@ -112,6 +119,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
         for _, row in df.iterrows():
             airline_code = str(row.get('Airlines', '')).strip().lower()
             airline_name = str(row.get('Airlines Name', '')).strip().lower()
+
             if airline_code == last_code or airline_name == last_name:
                 matched_rows.append(row)
 
@@ -148,6 +156,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                     for col in cabin_columns:
                         if col not in cabins_found:
                             row_dict.pop(col, None)
+
                     for cabin in cabins_found:
                         if cabin in row_dict:
                             val = row_dict.pop(cabin)
@@ -167,18 +176,19 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                             ["Validity", "Exclusions"]
                 remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
                 final_df = final_df.reindex(columns=base_cols + remaining_cols)
+
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
                 rows_text = final_df.to_string(index=False)
-                prompt = f"""
+                prompt = f\"\"\"
 Customer asked: '{user_input}'
 Here are the deals from the sheet:
 
 {rows_text}
 
 Please summarize the deals in simple language, highlight important notes/exclusions, and be concise.
-"""
+\"\"\"
                 ai_summary = ask_groq(prompt)
 
             elif fallback_results:
@@ -198,14 +208,14 @@ Please summarize the deals in simple language, highlight important notes/exclusi
                 final_table = final_df if not final_df.empty else None
 
                 rows_text = final_df.to_string(index=False)
-                prompt = f"""
+                prompt = f\"\"\"
 Customer asked: '{user_input}'
 Here are the closest deals:
 
 {rows_text}
 
 Please summarize the deals in simple language, highlight important notes/exclusions, and be concise.
-"""
+\"\"\"
                 ai_summary = ask_groq(prompt)
 
             else:
@@ -217,7 +227,6 @@ Please summarize the deals in simple language, highlight important notes/exclusi
             st.markdown(f"**AI Summary:** {ai_summary}")
 
             if final_table is not None and not final_table.empty:
-                final_table = final_table.copy()
                 final_table.columns = final_table.columns.astype(str).str.strip()
                 final_table = final_table.loc[:, ~final_table.columns.duplicated()]
                 st.dataframe(final_table, use_container_width=True)
