@@ -6,8 +6,8 @@ from groq import Groq  # Groq SDK
 # --- 1. SETUP & DATA ---
 st.set_page_config(page_title="Smart Airline Deal Assistant", layout="wide", page_icon="✈️")
 
-DEAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/edit?gid=0#gid=0"
-ROUTE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h-GAtHsQA8hEnEccX1qzqQlbvu9CHauFSYTS5mgNLc0/edit?gid=0#gid=0"
+DEAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
+ROUTE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h-GAtHsQA8hEnEccX1qzqQlbvu9CHauFSYTS5mgNLc0/export?format=csv&gid=0"
 
 @st.cache_data(ttl=60)
 def load_data():
@@ -72,9 +72,9 @@ def ask_groq(prompt):
 
 # --- 6. HELPER: Extract origin/destination ---
 def extract_origin_destination(text):
-    match = re.search(r'from (\w+) to (\w+)', text.lower())
+    match = re.search(r'from ([\w\s]+) to ([\w\s]+)', text.lower())
     if match:
-        return match.group(1), match.group(2)
+        return match.group(1).strip(), match.group(2).strip()
     return None, None
 
 # --- 7. CHAT LOGIC ---
@@ -106,16 +106,27 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
     origin, destination = extract_origin_destination(user_input)
     direct_flights = pd.DataFrame()
     if origin and destination:
-        direct_flights = routes_df[
-            (routes_df['origin_city'].str.lower() == origin) &
-            (routes_df['destination_city'].str.lower() == destination)
-        ]
-    
+        if 'origin_city' in routes_df.columns and 'destination_city' in routes_df.columns:
+            direct_flights = routes_df[
+                (routes_df['origin_city'].str.lower() == origin.lower()) &
+                (routes_df['destination_city'].str.lower() == destination.lower())
+            ]
+
     matched_rows = []
     airline_found = False
 
     if not direct_flights.empty:
-        direct_airline_codes = direct_flights['direct_airlines'].str.lower().str.split(',').explode().str.strip().tolist()
+        direct_airline_codes = []
+        if 'direct_airlines' in direct_flights.columns:
+            direct_airline_codes = (
+                direct_flights['direct_airlines']
+                .dropna()
+                .str.lower()
+                .str.split(',')
+                .explode()
+                .str.strip()
+                .tolist()
+            )
         for _, row in df.iterrows():
             airline_code = str(row.get('Airlines', '')).strip().lower()
             airline_name = str(row.get('Airlines Name', '')).strip().lower()
@@ -129,6 +140,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
         final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title()} to {destination.title()} in the deal sheet."
         st.markdown(final_reply)
         st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": None})
+
     else:
         # --- PROCESS DEALS ---
         results = []
