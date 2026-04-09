@@ -1,225 +1,187 @@
 import streamlit as st
 import pandas as pd
-import re
-from groq import Groq  # Groq SDK
+import calendar
 
-# --- 1. SETUP & DATA ---
-st.set_page_config(page_title="Smart Airline Deal Assistant", layout="wide", page_icon="✈️")
+# ✅ ADD THESE IMPORTS (NEW)
+from datetime import datetime
+import os
 
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Deal Sheet Assistant", layout="wide")
+
+# ✅ ADD LOGGING FUNCTION (NEW)
+def log_visit():
+    data = pd.DataFrame([[datetime.now()]], columns=["timestamp"])
+    if os.path.exists("usage_log.csv"):
+        data.to_csv("usage_log.csv", mode='a', header=False, index=False)
+    else:
+        data.to_csv("usage_log.csv", index=False)
+
+# ✅ CALL LOGGING (NEW - SAFE)
+try:
+    log_visit()
+except:
+    pass
+
+# --- SESSION STATE ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# --- GOOGLE SHEET ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/export?format=csv&gid=0"
 
-@st.cache_data(ttl=60)
-def load_data():
-    try:
-        df = pd.read_csv(SHEET_URL)
-        df.columns = df.columns.astype(str).str.strip()
-        return df
-    except:
-        return pd.DataFrame()
+@st.cache_data(ttl=600)
+def load_sheet(url):
+    df = pd.read_csv(url)
+    df.columns = df.columns.str.strip().str.lower()
+    return df
 
-df = load_data()
+df = load_sheet(SHEET_URL)
 
-# --- 2. DATE SCORER ---
-def get_date_score(text):
-    if not text or pd.isna(text):
-        return None
-    text = str(text).lower()
-    months = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
-              'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
-    m_val = next((v for k, v in months.items() if k in text), 0)
-    y_match = re.findall(r'\b20\d{2}\b|\b\d{2}\b', text)
-    if not y_match or m_val == 0:
-        return None
-    y_str = y_match[-1]
-    y_val = int(y_str) if len(y_str) == 4 else int("20" + y_str)
-    return (y_val * 100) + m_val
-
-# --- 3. SESSION STATE ---
-for key in ["messages", "pending_rows", "last_user_score", "last_cabins", "last_airline"]:
-    if key not in st.session_state:
-        st.session_state[key] = None if key != "messages" else []
-
-# --- 4. DISPLAY CHAT HISTORY ---
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if "table" in msg and msg["table"] is not None:
-            table = msg["table"].copy()
-            table.columns = table.columns.astype(str).str.strip()
-            table = table.loc[:, ~table.columns.duplicated()]
-            st.dataframe(table, use_container_width=True)
-
-# --- 5. INITIALIZE GROQ CLIENT ---
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-def ask_groq(prompt: str) -> str:
-    try:
-        response = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a helpful airline assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            model="openai/gpt-oss-20b"
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error calling Groq API: {e}"
-
-# --- 6. CHAT LOGIC ---
+# --- TITLE ---
 st.title("✈️ Smart Airline Deal Assistant")
 
-user_input = st.chat_input("Ex: 'AA Eco Dec 2026' or 'calculate margin'")
-if user_input:
+# --- SHOW CHAT HISTORY ---
+for msg in st.session_state.messages:
+    st.chat_message(msg["role"]).write(msg["content"])
+
+# --- USER INPUT ---
+if user_input := st.chat_input("Ask deal (example: Airline code and Cabin type (AI deal for eco)"):
 
     st.session_state.messages.append({"role": "user", "content": user_input})
+    query = user_input.lower()
 
-    with st.chat_message("user"):
-        st.write(user_input)
+    # --- MONTH DETECTION ---
+    month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
 
-    # --- Margin Calculation ---
-    if "calculate margin" in user_input.lower():
-        st.info("⚠️ Use Python to calculate margins. AI will not calculate them accurately.")
-        base_fare = st.number_input("Base Fare", min_value=0, value=2500)
-        yq = st.number_input("YQ/Taxes", min_value=0, value=5000)
-        selling_price = st.number_input("Selling Price", min_value=0, value=10000)
-        margin = selling_price - (base_fare + yq)
-        st.success(f"Margin for First Class: {margin}")
-    else:
-        query = user_input.lower().strip()
-        user_score = get_date_score(query)
+    query_month = None
+    for m in month_map:
+        if m in query:
+            query_month = month_map[m]
+            break
 
-        if user_score:
-            st.session_state.last_user_score = user_score
-        active_score = st.session_state.last_user_score or None
+    with st.chat_message("assistant"):
 
-        # --- CABINS ---
-        cabin_map = {
-            "bus": "Bus", "business": "Bus",
-            "eco": "Eco", "economy": "Eco",
-            "first": "First", "prem": "Prem. eco"
-        }
+        if df.empty:
+            reply = "Deal sheet could not be loaded."
+            st.write(reply)
 
-        cabins_found = [v for k, v in cabin_map.items() if k in query]
-        if cabins_found:
-            st.session_state.last_cabins = cabins_found
         else:
-            cabins_found = st.session_state.last_cabins
 
-        # --- AIRLINE MATCH ---
-        matched_rows = []
-        airline_found = False
+            # --- CABIN DETECTION (FIXED) ---
+            words = query.replace(".", " ").split()
 
-        for _, row in df.iterrows():
-            airline_code = str(row.get('Airlines', '')).strip().lower()
-            airline_name = str(row.get('Airlines Name', '')).strip().lower()
-            if airline_code in query or airline_name in query:
-                matched_rows.append(row)
-                airline_found = True
-                st.session_state.last_airline = {
-                    "Airlines": airline_code,
-                    "Airlines Name": airline_name
-                }
+            cabin_column = None
 
-        if not airline_found and st.session_state.last_airline is not None:
-            last_code = st.session_state.last_airline["Airlines"]
-            last_name = st.session_state.last_airline["Airlines Name"]
-            for _, row in df.iterrows():
-                airline_code = str(row.get('Airlines', '')).strip().lower()
-                airline_name = str(row.get('Airlines Name', '')).strip().lower()
-                if airline_code == last_code or airline_name == last_name:
-                    matched_rows.append(row)
+            if "prem" in words or "premium" in words:
+                cabin_column = "prem. eco"
 
-        # --- ASSISTANT RESPONSE ---
-        with st.chat_message("assistant"):
+            elif "bus" in words or "business" in words:
+                cabin_column = "bus"
 
-            if not matched_rows and st.session_state.pending_rows is not None:
-                matched_rows = st.session_state.pending_rows
+            elif "first" in words:
+                cabin_column = "first"
 
-            if matched_rows:
-                if not cabins_found:
-                    st.session_state.pending_rows = matched_rows
-                else:
-                    st.session_state.pending_rows = None
+            elif "eco" in words or "economy" in words:
+                cabin_column = "eco"
 
-                results = []
-                airline_display_name = ""
+            # --- CHEAPEST DEAL LOGIC ---
+            if "cheapest" in query or "best" in query:
 
-                for row in matched_rows:
-                    val_text = str(row.get('Validity', ''))
-                    excl_text = str(row.get('Exclusions', 'None listed'))
-                    sheet_score = get_date_score(val_text)
-                    airline_display_name = str(row.get('Airlines Name', '')).upper()
-                    row_dict = row.to_dict()
-                    row_dict["Exclusions"] = excl_text
+                if cabin_column and cabin_column in df.columns:
 
-                    is_valid = True
-                    if active_score:
-                        if not sheet_score or sheet_score < active_score:
-                            is_valid = False
+                    best_deals = df.sort_values(by=cabin_column).head(5)
 
-                    if cabins_found:
-                        for col in ["First","Bus","Prem. eco","Eco"]:
-                            if col not in cabins_found and col in row_dict:
-                                row_dict.pop(col, None)
+                    st.write(f"🏆 Top {cabin_column} deals:")
+                    st.dataframe(best_deals)
 
-                    if is_valid:
-                        results.append(row_dict)
-
-                if results:
-                    final_df = pd.DataFrame(results)
-
-                    # --- Keep everything literal ---
-                    base_cols = ["Airlines", "Airlines Name", "IATA"] + \
-                                ([c for c in cabins_found] if cabins_found else []) + \
-                                ["Validity", "Exclusions"]
-                    remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
-                    final_df = final_df.reindex(columns=base_cols + remaining_cols)
-                    final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
-                    final_table = final_df
-
-                    # --- AI summary prompt (clean, readable, "Deal" only) ---
-                    final_df_for_ai = final_df.copy()
-                    final_df_for_ai.replace(to_replace=r"(?i)\bDiscount\b", value="Deal", regex=True, inplace=True)
-                    rows_text = final_df_for_ai.to_csv(index=False)
-
-                    prompt = (
-                        f"Customer asked: '{user_input}'\n\n"
-                        "Summarize the airline **deals** below in a readable, well-spaced format.\n"
-                        "- Always use the word 'Deal', never 'Discount'.\n"
-                        "- Keep all codes exactly as in the table (O/B, I/B, B+YQ, etc.).\n"
-                        "- Present each deal as a bullet point.\n"
-                        "- Include cabin, validity, exclusions, and fare.\n"
-                        "- Use proper spacing and line breaks for easy reading.\n"
-                        "- Do not interpret or change any data; keep everything literal.\n"
-                        "Table (CSV literal):\n'''\n"
-                        + rows_text + "'''\n"
-                    )
-                    ai_summary = ask_groq(prompt)
+                    reply = f"Showing best {cabin_column} deals."
 
                 else:
-                    final_reply = f"❌ No deals found for **{airline_display_name}**."
-                    final_table = None
-                    ai_summary = "No deals to summarize."
-
-                st.markdown(final_reply)
-                st.markdown(f"**AI Summary:**\n{ai_summary}")
-
-                if final_table is not None and not final_table.empty:
-                    final_table.columns = final_table.columns.astype(str).str.strip()
-                    final_table = final_table.loc[:, ~final_table.columns.duplicated()]
-                    st.dataframe(final_table, use_container_width=True)
-
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": final_reply,
-                    "table": final_table
-                })
+                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First"
+                    st.write(reply)
 
             else:
-                resp = "I couldn't find that airline. Please try 'AI', 'AA', etc."
-                st.write(resp)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": resp,
-                    "table": None
-                })
+
+                filtered_df = df.copy()
+                airline_found = None
+
+                words = query.split()
+
+                for _, row in df.iterrows():
+
+                    airline = str(row["airlines"]).lower()
+                    airline_name = str(row["airlines name"]).lower()
+                    iata = str(row["iata"]).lower()
+
+                    if iata in words:
+                        airline_found = airline
+                        filtered_df = df[df["iata"].str.lower() == iata]
+                        break
+
+                    if airline in words:
+                        airline_found = airline
+                        filtered_df = df[df["airlines"].str.lower() == airline]
+                        break
+
+                    if airline_name in query:
+                        airline_found = airline
+                        filtered_df = df[df["airlines name"].str.lower() == airline_name]
+                        break
+
+                if not airline_found:
+                    reply = "Please mention a valid airline name or IATA code."
+                    st.write(reply)
+
+                elif not cabin_column:
+                    reply = "Please specify cabin class: Eco / Prem.Eco / Bus / First."
+                    st.write(reply)
+
+                else:
+
+                    result = filtered_df
+
+                    if result.empty:
+                        reply = "No deal found."
+                        st.write(reply)
+
+                    else:
+
+                        row = result.iloc[0]
+
+                        deal_value = row[cabin_column]
+                        airline_name = row["airlines name"]
+                        iata_code = row["iata"]
+                        validity_text = str(row.get("validity", "")).lower()
+
+                        validity_month = None
+                        for m in month_map:
+                            if m in validity_text:
+                                validity_month = month_map[m]
+                                break
+
+                        if query_month and validity_month and query_month > validity_month:
+
+                            st.write("❌ No deal available for the given month.")
+                            reply = "Deal not valid for the requested month."
+
+                        else:
+
+                            st.write(f"✈️ **{airline_name} ({iata_code})**")
+                            st.write(f"💺 **{cabin_column.upper()} Deal:** {deal_value}")
+
+                            if "validity" in result.columns:
+                                st.write(f"📅 **Validity:** {row['validity']}")
+
+                            if "exclusions" in result.columns and pd.notna(row["exclusions"]):
+                                st.write(f"⚠️ **Exclusions:** {row['exclusions']}")
+
+                            if "notes" in result.columns and pd.notna(row["notes"]):
+                                st.write(f"📝 **Notes:** {row['notes']}")
+
+                            st.write("📊 Full Deal Details:")
+                            st.dataframe(result)
+
+                            reply = f"{airline_name} {cabin_column} deal displayed."
+
+        st.session_state.messages.append({"role": "assistant", "content": reply})
