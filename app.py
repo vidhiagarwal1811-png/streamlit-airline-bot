@@ -65,14 +65,12 @@ for msg in st.session_state.messages:
 # --- 5. INITIALIZE GROQ CLIENT ---
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# ✅ FIXED FUNCTION (ONLY CHANGE)
+# ✅ FIXED GROQ CALL
 def ask_groq(prompt):
     try:
         response = client.chat.completions.create(
             model="llama3-8b-8192",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.3
         )
         return response.choices[0].message.content.strip()
@@ -130,11 +128,16 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
                     airline_found = True
                     st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": row.get('Airlines Name','')}
 
-    # --- NO DIRECT DEAL FOUND ---
+    # --- NO DIRECT DEAL FOUND (✅ FIXED HERE) ---
     if not matched_rows:
-        final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title()} to {destination.title()} in the deal sheet."
+        if origin and destination:
+            final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title()} to {destination.title()} in the deal sheet."
+        else:
+            final_reply = "❌ Sorry, I couldn’t detect the route. Please use format like: 'from Delhi to London'."
+
         st.markdown(final_reply)
         st.session_state.messages.append({"role":"assistant","content":final_reply,"table":None})
+
     else:
         # --- PROCESS DEALS ---
         results = []
