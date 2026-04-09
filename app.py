@@ -177,13 +177,20 @@ if user_input:
                     final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                     final_table = final_df
 
-                    # --- AI summary prompt ---
-                    rows_text = final_df.to_csv(index=False)
+                    # --- AI summary prompt (clean, readable, "Deal" only) ---
+                    final_df_for_ai = final_df.copy()
+                    final_df_for_ai.replace(to_replace=r"(?i)\bDiscount\b", value="Deal", regex=True, inplace=True)
+                    rows_text = final_df_for_ai.to_csv(index=False)
+
                     prompt = (
                         f"Customer asked: '{user_input}'\n\n"
-                        "Summarize the airline **deals** from the table below.\n"
-                        "Do NOT change any codes. Keep O/B and I/B as-is.\n"
-                        "Keep everything exactly as in the table. Only describe in simple language.\n"
+                        "Summarize the airline **deals** below in a readable, well-spaced format.\n"
+                        "- Always use the word 'Deal', never 'Discount'.\n"
+                        "- Keep all codes exactly as in the table (O/B, I/B, B+YQ, etc.).\n"
+                        "- Present each deal as a bullet point.\n"
+                        "- Include cabin, validity, exclusions, and fare.\n"
+                        "- Use proper spacing and line breaks for easy reading.\n"
+                        "- Do not interpret or change any data; keep everything literal.\n"
                         "Table (CSV literal):\n'''\n"
                         + rows_text + "'''\n"
                     )
@@ -195,7 +202,7 @@ if user_input:
                     ai_summary = "No deals to summarize."
 
                 st.markdown(final_reply)
-                st.markdown(f"**AI Summary:** {ai_summary}")
+                st.markdown(f"**AI Summary:**\n{ai_summary}")
 
                 if final_table is not None and not final_table.empty:
                     final_table.columns = final_table.columns.astype(str).str.strip()
