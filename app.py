@@ -119,7 +119,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
         for _, row in df.iterrows():
             airline_code = str(row.get('Airlines', '')).strip().lower()
             airline_name = str(row.get('Airlines Name', '')).strip().lower()
-
             if airline_code == last_code or airline_name == last_name:
                 matched_rows.append(row)
 
@@ -157,12 +156,6 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                         if col not in cabins_found:
                             row_dict.pop(col, None)
 
-                    for cabin in cabins_found:
-                        if cabin in row_dict:
-                            val = row_dict.pop(cabin)
-                            row_dict.pop(cabin.upper(), None)
-                            row_dict[cabin.upper()] = val
-
                 if is_valid:
                     results.append(row_dict)
                 else:
@@ -172,7 +165,7 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
             if results:
                 final_df = pd.DataFrame(results)
                 base_cols = ["Airlines", "Airlines Name", "IATA"] + \
-                            ([c.upper() for c in cabins_found] if cabins_found else []) + \
+                            ([c for c in cabins_found] if cabins_found else []) + \
                             ["Validity", "Exclusions"]
                 remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
                 final_df = final_df.reindex(columns=base_cols + remaining_cols)
@@ -180,14 +173,30 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
-                rows_text = final_df.to_string(index=False)
+                # --- Convert to bullet-point list preserving all codes ---
+                rows_list = []
+                for _, row in final_df.iterrows():
+                    cabins = [c for c in ["First","Bus","Prem. eco","Eco"] if c in row and pd.notna(row[c])]
+                    cabin_info = ", ".join([f"{c}: {row[c]}" for c in cabins])
+                    deal_text = f"- Airline: {row['Airlines Name'].upper()}, {cabin_info}, Validity: {row.get('Validity','N/A')}, Notes: {row.get('Exclusions','None')}"
+                    rows_list.append(deal_text)
+                rows_text = "\n".join(rows_list)
+
+                # --- AI Summary Prompt ---
                 prompt = f"""
 Customer asked: '{user_input}'
-Here are the deals from the sheet:
+
+You are a travel assistant. Summarize the airline **deals** from the list below. 
+
+- Use exactly the fare/cabin info as it appears in the sheet (do not interpret codes like 'B' or 'YQ').  
+- Clearly mention which cabins or fares are available for each deal.  
+- Highlight validity and any exclusions.  
+- Write in simple, customer-friendly language.  
+- Be concise, clear, and easy to read.  
+
+Deals list:
 
 {rows_text}
-
-Please summarize the deals in simple language, highlight important notes/exclusions, and be concise.
 """
                 ai_summary = ask_groq(prompt)
 
@@ -207,14 +216,27 @@ Please summarize the deals in simple language, highlight important notes/exclusi
                 )
                 final_table = final_df if not final_df.empty else None
 
-                rows_text = final_df.to_string(index=False)
+                rows_list = []
+                for _, row in final_df.iterrows():
+                    cabins = [c for c in ["First","Bus","Prem. eco","Eco"] if c in row and pd.notna(row[c])]
+                    cabin_info = ", ".join([f"{c}: {row[c]}" for c in cabins])
+                    deal_text = f"- Airline: {row['Airlines Name'].upper()}, {cabin_info}, Validity: {row.get('Validity','N/A')}, Notes: {row.get('Exclusions','None')}"
+                    rows_list.append(deal_text)
+                rows_text = "\n".join(rows_list)
+
                 prompt = f"""
 Customer asked: '{user_input}'
-Here are the closest deals:
+
+You are a travel assistant. Summarize the airline **deals** from the list below. 
+
+- Use exactly the fare/cabin info as it appears in the sheet (do not interpret codes like 'B' or 'YQ').  
+- Highlight validity and any exclusions.  
+- Write in simple, customer-friendly language.  
+- Be concise, clear, and easy to read.  
+
+Deals list:
 
 {rows_text}
-
-Please summarize the deals in simple language, highlight important notes/exclusions, and be concise.
 """
                 ai_summary = ask_groq(prompt)
 
