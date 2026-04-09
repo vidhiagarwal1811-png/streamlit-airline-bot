@@ -11,16 +11,27 @@ ROUTE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h-GAtHsQA8hEnEccX1qzq
 
 # --- 2. LOAD DATA ---
 @st.cache_data(ttl=60)
-def load_data(url):
+def load_data():
     try:
-        df = pd.read_csv(url)
+        df = pd.read_csv(DEAL_SHEET_URL)
         df.columns = df.columns.astype(str).str.strip()
         return df
-    except:
+    except Exception as e:
+        st.error(f"Error loading deal sheet: {e}")
         return pd.DataFrame()
 
-deal_df = load_data(DEAL_SHEET_URL)
-routes_df = load_data(ROUTE_SHEET_URL)
+@st.cache_data(ttl=60)
+def load_routes():
+    try:
+        routes_df = pd.read_csv(ROUTE_SHEET_URL)
+        routes_df.columns = routes_df.columns.astype(str).str.strip().str.lower()
+        return routes_df
+    except Exception as e:
+        st.error(f"Error loading route sheet: {e}")
+        return pd.DataFrame()
+
+df = load_data()
+routes_df = load_routes()
 
 # --- 3. DATE SCORER ---
 def get_date_score(text):
@@ -38,7 +49,7 @@ def get_date_score(text):
     return (y_val * 100) + m_val
 
 # --- 4. SESSION STATE ---
-for key in ["messages", "pending_rows", "last_user_score", "last_cabins", "last_airline"]:
+for key in ["messages", "last_user_score", "last_cabins", "last_airline"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "messages" else []
 
@@ -57,7 +68,7 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def ask_groq(prompt):
     try:
-        response = client.predict(prompt)  # Latest SDK
+        response = client.predict(prompt)
         return response.text
     except Exception as e:
         return f"Error calling Groq API: {e}"
@@ -73,15 +84,12 @@ def extract_origin_destination(text):
 st.title("✈️ Smart Airline Deal Assistant")
 
 if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
-
     st.session_state.messages.append({"role": "user", "content": user_input})
-
     with st.chat_message("user"):
         st.write(user_input)
 
     query = user_input.lower().strip()
     user_score = get_date_score(query)
-
     if user_score:
         st.session_state.last_user_score = user_score
     active_score = st.session_state.last_user_score or None
@@ -96,25 +104,29 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
 
     # --- DIRECT FLIGHT FILTER ---
     origin, destination = extract_origin_destination(user_input)
-    matched_rows = []
-    airline_found = False
-
+    direct_flights = pd.DataFrame()
     if origin and destination:
         direct_flights = routes_df[
-            (routes_df['origin_city'].str.lower() == origin) &
-            (routes_df['destination_city'].str.lower() == destination)
+            (routes_df['origin_city'].str.lower() == origin.lower()) &
+            (routes_df['destination_city'].str.lower() == destination.lower())
         ]
-        if not direct_flights.empty:
-            direct_airline_codes = direct_flights['direct_airlines'].str.split(',').explode().str.strip().str.upper().tolist()
-            for _, row in deal_df.iterrows():
-                airline_code = str(row.get('Airlines', '')).strip().upper()
-                if airline_code in direct_airline_codes:
-                    matched_rows.append(row)
-                    airline_found = True
-                    st.session_state.last_airline = {"Airlines": airline_code, "Airlines Name": str(row.get('Airlines Name',''))}
 
-    if not matched_rows:
-        final_reply = f"❌ Sorry, there are no direct flights with deals from {origin.title()} to {destination.title()} in the deal sheet."
+    # --- CHECK IF DEAL EXISTS ---
+    matched_rows = []
+    if not direct_flights.empty:
+        direct_airline_codes = direct_flights['direct_airlines'].str.lower().str.split(',').explode().str.strip().tolist()
+        for _, row in df.iterrows():
+            airline_code = str(row.get('Airlines', '')).strip().lower()
+            if airline_code in direct_airline_codes:
+                matched_rows.append(row)
+
+    # --- RESPONSES ---
+    if direct_flights.empty:
+        final_reply = f"❌ Sorry, there are no direct flights from {origin.title()} to {destination.title()}."
+        st.markdown(final_reply)
+        st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": None})
+    elif not matched_rows:
+        final_reply = f"❌ Direct flights exist from {origin.title()} to {destination.title()}, but no deal is available in the deal sheet."
         st.markdown(final_reply)
         st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": None})
     else:
@@ -132,46 +144,42 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026 from Delhi to London'"):
                 if not sheet_score or sheet_score < active_score:
                     is_valid = False
 
-            # CABIN FILTER
+            # Keep only requested cabins
             if cabins_found:
                 cabin_columns = ["First", "Bus", "Prem. eco", "Eco"]
                 for col in cabin_columns:
                     if col not in cabins_found:
                         row_dict.pop(col, None)
-                for cabin in cabins_found:
-                    if cabin in row_dict:
-                        val = row_dict.pop(cabin)
-                        row_dict.pop(cabin.upper(), None)
-                        row_dict[cabin.upper()] = val
 
             if is_valid:
                 results.append(row_dict)
 
-        final_df = pd.DataFrame(results)
-        base_cols = ["Airlines", "Airlines Name", "IATA"] + ([c.upper() for c in cabins_found] if cabins_found else []) + ["Validity", "Exclusions"]
-        remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
-        final_df = final_df.reindex(columns=base_cols + remaining_cols)
+        if results:
+            final_df = pd.DataFrame(results)
+            base_cols = ["Airlines", "Airlines Name", "IATA"] + ([c for c in cabins_found] if cabins_found else []) + ["Validity", "Exclusions"]
+            remaining_cols = [c for c in final_df.columns if c not in set(base_cols) and c != "S.No"]
+            final_df = final_df.reindex(columns=base_cols + remaining_cols)
 
-        final_reply = f"✅ Found {len(results)} valid deal(s) for **{', '.join(set(final_df['Airlines Name'].tolist()))}**."
-        final_table = final_df
+            final_reply = f"✅ Found {len(results)} valid deal(s)."
+            final_table = final_df
 
-        # --- AI SUMMARY ---
-        rows_text = final_df.to_string(index=False)
-        prompt = f"""
+            # --- AI SUMMARY ---
+            rows_text = final_df.to_string(index=False)
+            prompt = f"""
 Customer asked: '{user_input}'
 Here are the deals from the sheet (keep all O/B and I/B as-is, do not replace or explain):
 {rows_text}
 
 Please summarize the deals in simple language, highlight important notes/exclusions, use the word 'deal' only, and be concise.
 """
-        ai_summary = ask_groq(prompt)
+            ai_summary = ask_groq(prompt)
 
-        st.markdown(final_reply)
-        st.markdown(f"**AI Summary:** {ai_summary}")
-        if final_table is not None and not final_table.empty:
-            final_table = final_table.copy()
-            final_table.columns = final_table.columns.astype(str).str.strip()
-            final_table = final_table.loc[:, ~final_table.columns.duplicated()]
-            st.dataframe(final_table, use_container_width=True)
+            st.markdown(final_reply)
+            st.markdown(f"**AI Summary:** {ai_summary}")
+            if final_table is not None and not final_table.empty:
+                final_table = final_table.copy()
+                final_table.columns = final_table.columns.astype(str).str.strip()
+                final_table = final_table.loc[:, ~final_table.columns.duplicated()]
+                st.dataframe(final_table, use_container_width=True)
 
-        st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": final_table})
+            st.session_state.messages.append({"role": "assistant", "content": final_reply, "table": final_table})
