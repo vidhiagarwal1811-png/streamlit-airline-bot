@@ -167,18 +167,76 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                 final_table = final_df
 
-                # --- AI SUMMARY (RAW CSV, PRESERVE DEAL FORMAT) ---
+                # --- FIXED AI SUMMARY BLOCK ---
                 rows_text = final_df.to_csv(index=False)
-                prompt = f"""
-Customer asked: '{user_input}'
+                prompt = (
+                    f"Customer asked: '{user_input}'\n\n"
+                    "You are a travel assistant. Summarize the airline **deals** from the table below.\n\n"
+                    "IMPORTANT:\n"
+                    "- Do not interpret or change any fare/cabin codes (e.g., B, YQ, ECO). Keep them exactly as in the sheet.\n"
+                    "- Always refer to them as 'deals', never 'discounts'.\n"
+                    "- Clearly highlight validity and any exclusions.\n"
+                    "- Use simple, concise, customer-friendly language.\n"
+                    "- Keep the formatting and codes exactly as they appear.\n\n"
+                    "Deals table (raw CSV):\n\n"
+                    "```\n"
+                    + rows_text +
+                    "```\n"
+                )
+                ai_summary = ask_groq(prompt)
 
-You are a travel assistant. Summarize the airline **deals** from the table below. 
+            elif fallback_results:
+                fallback_results.sort(key=lambda x: abs(x[0] - active_score) if active_score else x[0])
+                closest_score = fallback_results[0][0]
+                closest_rows = [r for s, r in fallback_results if s == closest_score]
+                final_df = pd.DataFrame(closest_rows)
+                final_reply = (
+                    f"❌ No deals available for given date.\n\n"
+                    f"👉 Closest available deal(s) are shown below."
+                )
+                final_table = final_df if not final_df.empty else None
 
-IMPORTANT:
-- Do not interpret or change any fare/cabin codes (e.g., B, YQ, ECO). Keep them exactly as in the sheet.
-- Always refer to them as "deals", never "discounts".
-- Clearly highlight validity and any exclusions.
-- Use simple, concise, customer-friendly language.
-- Keep the formatting and codes exactly as they appear.
+                rows_text = final_df.to_csv(index=False)
+                prompt = (
+                    f"Customer asked: '{user_input}'\n\n"
+                    "You are a travel assistant. Summarize the airline **deals** from the table below.\n\n"
+                    "IMPORTANT:\n"
+                    "- Do not interpret or change any fare/cabin codes (e.g., B, YQ, ECO). Keep them exactly as in the sheet.\n"
+                    "- Always refer to them as 'deals', never 'discounts'.\n"
+                    "- Clearly highlight validity and any exclusions.\n"
+                    "- Use simple, concise, customer-friendly language.\n"
+                    "- Keep the formatting and codes exactly as they appear.\n\n"
+                    "Deals table (raw CSV):\n\n"
+                    "```\n"
+                    + rows_text +
+                    "```\n"
+                )
+                ai_summary = ask_groq(prompt)
 
-Deals table (raw CSV):
+            else:
+                final_reply = f"❌ No deals found for **{airline_display_name}**."
+                final_table = None
+                ai_summary = "No deals to summarize."
+
+            st.markdown(final_reply)
+            st.markdown(f"**AI Summary:** {ai_summary}")
+
+            if final_table is not None and not final_table.empty:
+                final_table.columns = final_table.columns.astype(str).str.strip()
+                final_table = final_table.loc[:, ~final_table.columns.duplicated()]
+                st.dataframe(final_table, use_container_width=True)
+
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": final_reply,
+                "table": final_table
+            })
+
+        else:
+            resp = "I couldn't find that airline. Please try 'AI', 'AA', etc."
+            st.write(resp)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": resp,
+                "table": None
+            })
