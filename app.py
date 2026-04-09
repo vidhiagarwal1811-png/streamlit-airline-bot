@@ -6,8 +6,8 @@ from groq import Groq  # Groq SDK
 # --- 1. SETUP & DATA ---
 st.set_page_config(page_title="Smart Airline Deal Assistant", layout="wide", page_icon="✈️")
 
-DEAL_SHEET_URL = "YOUR_DEAL_SHEET_CSV_EXPORT_URL"
-ROUTE_SHEET_URL = "YOUR_ROUTE_SHEET_CSV_EXPORT_URL"
+DEAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/1kwHFOIpTZ3qhk3JoiXxP68-tJGnfrPxkLoyRObQ4314/edit?gid=0#gid=0"
+ROUTE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h-GAtHsQA8hEnEccX1qzqQlbvu9CHauFSYTS5mgNLc0/edit?gid=0#gid=0"
 
 @st.cache_data(ttl=60)
 def load_data():
