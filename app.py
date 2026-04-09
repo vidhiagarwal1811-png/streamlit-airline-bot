@@ -181,14 +181,14 @@ if user_input := st.chat_input("Ex: 'AA Eco Dec 2026'"):
                 final_table = final_df
 
                 rows_text = final_df.to_string(index=False)
-                prompt = f\"\"\"
+                prompt = f"""
 Customer asked: '{user_input}'
 Here are the deals from the sheet:
 
 {rows_text}
 
 Please summarize the deals in simple language, highlight important notes/exclusions, and be concise.
-\"\"\"
+"""
                 ai_summary = ask_groq(prompt)
 
             elif fallback_results:
@@ -208,14 +208,14 @@ Please summarize the deals in simple language, highlight important notes/exclusi
                 final_table = final_df if not final_df.empty else None
 
                 rows_text = final_df.to_string(index=False)
-                prompt = f\"\"\"
+                prompt = f"""
 Customer asked: '{user_input}'
 Here are the closest deals:
 
 {rows_text}
 
 Please summarize the deals in simple language, highlight important notes/exclusions, and be concise.
-\"\"\"
+"""
                 ai_summary = ask_groq(prompt)
 
             else:
