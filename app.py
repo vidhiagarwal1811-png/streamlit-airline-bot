@@ -56,7 +56,7 @@ def ask_groq(prompt: str) -> str:
     try:
         response = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a helpful travel assistant."},
+                {"role": "system", "content": "You are a helpful airline assistant."},
                 {"role": "user", "content": prompt}
             ],
             model="openai/gpt-oss-20b"
@@ -92,6 +92,7 @@ if user_input:
             st.session_state.last_user_score = user_score
         active_score = st.session_state.last_user_score or None
 
+        # --- CABINS ---
         cabin_map = {
             "bus": "Bus", "business": "Bus",
             "eco": "Eco", "economy": "Eco",
@@ -104,6 +105,7 @@ if user_input:
         else:
             cabins_found = st.session_state.last_cabins
 
+        # --- AIRLINE MATCH ---
         matched_rows = []
         airline_found = False
 
@@ -127,6 +129,7 @@ if user_input:
                 if airline_code == last_code or airline_name == last_name:
                     matched_rows.append(row)
 
+        # --- ASSISTANT RESPONSE ---
         with st.chat_message("assistant"):
 
             if not matched_rows and st.session_state.pending_rows is not None:
@@ -164,6 +167,8 @@ if user_input:
 
                 if results:
                     final_df = pd.DataFrame(results)
+
+                    # --- Keep everything literal (O/B, I/B, B+YQ, BI, etc.) ---
                     base_cols = ["Airlines", "Airlines Name", "IATA"] + \
                                 ([c for c in cabins_found] if cabins_found else []) + \
                                 ["Validity", "Exclusions"]
@@ -172,14 +177,14 @@ if user_input:
                     final_reply = f"✅ Found {len(results)} valid deal(s) for **{airline_display_name}**."
                     final_table = final_df
 
-                    # AI summary (literal table only)
+                    # --- AI summary prompt ---
                     rows_text = final_df.to_csv(index=False)
                     prompt = (
                         f"Customer asked: '{user_input}'\n\n"
                         "Summarize the airline **deals** from the table below.\n"
-                        "Keep all fare/cabin codes exactly as in the sheet.\n"
+                        "Do NOT change any codes (O/B, I/B, B+YQ, BI, ECO, etc.).\n"
                         "Use the word 'deals', not 'discounts'.\n"
-                        "Highlight validity and exclusions. Make it concise and readable.\n"
+                        "Highlight validity and exclusions. Keep it concise and readable.\n"
                         "Table (CSV literal):\n'''\n"
                         + rows_text + "'''\n"
                     )
