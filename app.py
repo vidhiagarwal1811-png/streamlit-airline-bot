@@ -68,7 +68,7 @@ def ask_groq(prompt: str) -> str:
 # --- 6. CHAT LOGIC ---
 st.title("✈️ Smart Airline Deal Assistant")
 
-user_input = st.chat_input("Ex: 'AA Eco Dec 2026' or 'calculate margin'")
+user_input = st.chat_input("Ex: 'AA Eco Dec 2026'")
 if user_input:
 
     st.session_state.messages.append({"role": "user", "content": user_input})
